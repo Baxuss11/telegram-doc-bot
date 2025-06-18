@@ -1,2 +1,5 @@
 [phases.setup]
 nixPkgs = ["python3", "gcc", "zlib", "libjpeg", "libpng", "freetype"]
+
+[start]
+command = "python3 doc_bot.py"
