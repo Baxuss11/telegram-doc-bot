@@ -1,13 +1,11 @@
-# nixpacks.toml - Версия "План Б"
+# nixpacks.toml - Версия "План В - исправленная"
 
 [phases.setup]
-# Указываем конкретную версию Python и пакеты
+# Оставляем только одну версию Python и системные пакеты
 nixPkgs = ["...", "python311", "zlib", "jpeg", "libpng", "freetype"]
 
 [phases.install]
-# Явно указываем команду установки
 cmds = ["pip install -r requirements.txt"]
 
 [start]
-# Явно указываем команду запуска
 command = "python3 doc_bot.py"
