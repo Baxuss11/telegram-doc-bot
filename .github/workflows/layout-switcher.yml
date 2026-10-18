@@ -5,6 +5,7 @@ on:
     paths:
       - 'layout_switcher/**'
       - '.github/workflows/layout-switcher.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 jobs:
