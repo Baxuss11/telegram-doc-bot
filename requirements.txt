@@ -1,4 +1,4 @@
-python-telegram-bot==22.8
-Pillow==13.0.0
-fpdf2==2.8.9
-tzdata==2026.5
+python-telegram-bot>=22.0,<23
+Pillow>=10.4,<14
+fpdf2>=2.8,<3
+tzdata
