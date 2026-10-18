@@ -30,3 +30,7 @@ jobs:
       - name: Mac self-test
         if: runner.os == 'macOS'
         run: python mac_selftest.py --enable-russian
+      - name: Mac end-to-end test (TextEdit)
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        run: python ../.github/scripts/mac_e2e.py
