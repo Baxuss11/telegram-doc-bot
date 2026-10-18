@@ -19,6 +19,11 @@ SHIFT, RIGHT_ARROW = 56, 124
 SOURCE = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
 
 
+def refresh():
+    """Даём процессу узнать о смене раскладки (macOS сообщает о ней через цикл событий)."""
+    Quartz.CFRunLoopRunInMode(Quartz.kCFRunLoopDefaultMode, 0.3, False)
+
+
 def key(code, flags=0):
     for down in (True, False):
         event = Quartz.CGEventCreateKeyboardEvent(SOURCE, code, down)
@@ -37,6 +42,7 @@ def shift_tap():
 
 
 def type_keys(text):
+    refresh()
     for char in text:
         key(KEYS[char])
         time.sleep(0.15)
@@ -74,10 +80,12 @@ def main():
     # Английская раскладка, а печатаем русское слово
     type_keys('ghbdtn ')
     checks.append(('ghbdtn → привет', editor_text(), 'привет '))
+    refresh()
     checks.append(('раскладка стала русской', sources.current_id(), 'com.apple.keylayout.Russian'))
     # Теперь русская раскладка, а печатаем английское (клавиши h e l l o дают «руддщ»)
     type_keys('hello ')
     checks.append(('руддщ → hello', editor_text(), 'привет hello '))
+    refresh()
     checks.append(('раскладка стала английской', sources.current_id(), 'com.apple.keylayout.US'))
     type_keys('z ljvf ')
     checks.append(('z ljvf → я дома', editor_text(), 'привет hello я дома '))
