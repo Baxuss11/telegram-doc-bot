@@ -15,6 +15,7 @@ DATA_DIR=/var/lib/osk-bot
 ENV_FILE=/etc/osk-bot.env
 SERVICE=osk-bot
 BOT_USER=oskbot
+RAW_URL="https://raw.githubusercontent.com/Baxuss11/telegram-doc-bot/${BRANCH}/deploy/install.sh"
 
 # Всё внутри функции: при «curl | bash» скрипт читается целиком до запуска,
 # и команды вроде apt-get не «съедят» его остаток из stdin.
@@ -53,14 +54,16 @@ main() {
     "$APP_DIR/venv/bin/pip" install -q --upgrade pip
     "$APP_DIR/venv/bin/pip" install -q -r "$APP_DIR/requirements.txt"
 
-    if [ ! -f "$ENV_FILE" ]; then
-        echo "==> Настройки (сохранятся в $ENV_FILE, потом можно поправить: sudo nano $ENV_FILE)"
-        # При запуске через «curl | bash» клавиатура — это /dev/tty, а не stdin.
-        ask() { local v; read -r -p "$1: " v </dev/tty; echo "$v"; }
-        BOT_TOKEN=$(ask "Токен бота от @BotFather")
-        ADMIN_IDS=$(ask "Ваш Telegram ID (несколько — через запятую)")
-        APPS_SCRIPT_URL=$(ask "URL веб-приложения Apps Script (можно пусто и добавить позже)")
-        APPS_SCRIPT_SECRET=$(ask "Пароль Apps Script (SECRET из Code.gs, можно пусто)")
+    # Настройки задаются аргументами команды (без вопросов на экране):
+    #   ... | sudo bash -s -- ТОКЕН TELEGRAM_ID [APPS_SCRIPT_URL] [APPS_SCRIPT_SECRET]
+    # Либо заранее через переменные окружения BOT_TOKEN / ADMIN_IDS.
+    BOT_TOKEN="${1:-${BOT_TOKEN:-}}"
+    ADMIN_IDS="${2:-${ADMIN_IDS:-}}"
+    APPS_SCRIPT_URL="${3:-${APPS_SCRIPT_URL:-}}"
+    APPS_SCRIPT_SECRET="${4:-${APPS_SCRIPT_SECRET:-}}"
+
+    if [ -n "$BOT_TOKEN" ] && [ -n "$ADMIN_IDS" ]; then
+        echo "==> Настройки → $ENV_FILE"
         umask 077
         cat > "$ENV_FILE" <<EOF
 BOT_TOKEN=$BOT_TOKEN
@@ -70,6 +73,13 @@ APPS_SCRIPT_SECRET=$APPS_SCRIPT_SECRET
 DATA_DIR=$DATA_DIR
 EOF
         chmod 600 "$ENV_FILE"
+    elif [ ! -f "$ENV_FILE" ]; then
+        echo "⚠️ Не указаны токен и Telegram ID." >&2
+        echo "   Запустите так (вставьте свой токен вместо ТОКЕН):" >&2
+        echo "   curl -fsSL $RAW_URL | sudo bash -s -- 'ТОКЕН' '930419117'" >&2
+        exit 1
+    else
+        echo "==> Настройки уже есть ($ENV_FILE), оставляю как есть"
     fi
 
     echo "==> Служба $SERVICE"

@@ -51,16 +51,23 @@ Telegram-бот для выездной проверки документаци�
 
 ### 3. Свой сервер (Ubuntu 22.04+ / Debian 12+)
 
-Подключитесь к серверу по SSH и выполните одну команду:
+Подключитесь к серверу по SSH и выполните одну команду, подставив свой токен
+от @BotFather вместо `ТОКЕН` и свой Telegram ID вместо `ВАШ_ID`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Baxuss11/telegram-doc-bot/claude/nice-keller-a2pw6y/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Baxuss11/telegram-doc-bot/claude/nice-keller-a2pw6y/deploy/install.sh | sudo bash -s -- 'ТОКЕН' 'ВАШ_ID'
 ```
 
-Скрипт спросит токен, ваш Telegram ID, URL и пароль Apps Script, затем установит бота
-как системную службу `osk-bot`: он запускается вместе с сервером и сам
-перезапускается при сбое. База хранится в `/var/lib/osk-bot`, настройки —
-в `/etc/osk-bot.env`.
+Никаких вопросов на экране не будет. Скрипт установит бота как системную службу
+`osk-bot`: он запускается вместе с сервером и сам перезапускается при сбое.
+База хранится в `/var/lib/osk-bot`, настройки — в `/etc/osk-bot.env`.
+
+Google Диск можно подключить сразу, добавив ещё два аргумента (URL и пароль
+Apps Script), либо позже через `sudo nano /etc/osk-bot.env`:
+
+```bash
+curl -fsSL .../install.sh | sudo bash -s -- 'ТОКЕН' 'ВАШ_ID' 'URL_APPS_SCRIPT' 'ПАРОЛЬ_APPS_SCRIPT'
+```
 
 - Обновить бота до последней версии — та же команда.
 - Логи: `sudo journalctl -u osk-bot -f`
