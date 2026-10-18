@@ -3,9 +3,9 @@
 Набрали «ghbdtn» и нажали пробел — слово заменится на «привет», а раскладка
 переключится на русскую. И наоборот: «руддщ» -> «hello» + английская раскладка.
 
-Горячие клавиши:
-    Pause        — отменить последнюю замену или перевести слово вручную
-    Shift+Pause  — выключить / включить автопереключение
+Горячие клавиши (Windows, Linux / macOS):
+    Pause / Shift два раза подряд — отменить последнюю замену или перевести слово вручную
+    Shift+Pause / Ctrl+Shift+X    — выключить / включить автопереключение
     Ctrl+C в окне консоли — выход
 """
 import platform
@@ -130,12 +130,79 @@ def _switch_layout_windows(lang: str) -> None:
     print(f'⚠️  В системе не установлена {"русская" if lang == RU else "английская"} раскладка')
 
 
-# --- Перехват клавиатуры ---
+# --- Отслеживание набираемого слова (общее для всех систем) ---
+
+class WordTracker:
+    """Собирает буквы текущего слова. Системный перехватчик сообщает ему о нажатиях,
+    а он кладёт задачи в очередь; обрабатывает их process_task()."""
+
+    def __init__(self, tasks: queue.Queue):
+        self.tasks = tasks
+        self.word = []              # символы текущего слова
+        self.adjacent = False       # перед словом был ровно один пробел после другого слова
+        self.after_space = False
+        self.manual = False         # текущее слово уже переведено вручную — не проверять
+
+    def on_char(self, char: str):
+        if not self.word and not self.after_space:
+            self.adjacent = False
+        self.after_space = False
+        self.word.append(char)
+
+    def on_space(self):
+        if self.word:
+            self.tasks.put(('word', ''.join(self.word), self.adjacent, not self.manual))
+            self.word = []
+            self.manual = False
+            self.adjacent = self.after_space = True
+        else:
+            self.reset()  # два пробела подряд — новое предложение/фрагмент
+
+    def on_backspace(self):
+        if self.word:
+            self.word.pop()
+        else:
+            self.reset()
+
+    def on_manual(self):
+        word = ''.join(self.word)
+        self.tasks.put(('manual', word))
+        source = detect_layout(word)
+        if source:
+            self.word = list(convert(word, source))
+            self.manual = True
+
+    def on_toggle(self):
+        self.tasks.put(('toggle',))
+
+    def reset(self):
+        """Enter, стрелки, клик мышью, Ctrl+C — курсор мог уехать."""
+        self.word = []
+        self.adjacent = self.after_space = self.manual = False
+        self.tasks.put(('reset',))
+
+
+def process_task(engine: Engine, task) -> Optional[Replacement]:
+    kind = task[0]
+    if kind == 'reset':
+        engine.reset()
+    elif kind == 'toggle':
+        print('✅ Автопереключение включено' if engine.toggle() else '⏸  Автопереключение выключено')
+    elif kind == 'word':
+        return engine.on_word(*task[1:])
+    elif kind == 'manual':
+        return engine.on_manual(task[1])
+    return None
+
+
+# --- Перехват клавиатуры на Windows и Linux (pynput) ---
 
 XK_BREAK = 0xFF6B
 
 
 class KeyboardHook:
+    HOTKEYS = 'Pause — отменить замену, Shift+Pause — вкл/выкл'
+
     def __init__(self, engine: Engine):
         from pynput import keyboard, mouse
 
@@ -144,11 +211,7 @@ class KeyboardHook:
         self.engine = engine
         self.controller = keyboard.Controller()
         self.tasks = queue.Queue()
-
-        self.word = []              # символы текущего слова
-        self.adjacent = False       # перед словом был ровно один пробел после другого слова
-        self.after_space = False
-        self.manual = False         # текущее слово уже переведено по Pause — не проверять
+        self.tracker = WordTracker(self.tasks)
         self.pressed_modifiers = set()
         self.busy = False           # идёт перепечатка — свои нажатия не считаем
 
@@ -177,79 +240,36 @@ class KeyboardHook:
         # В X11 Shift+Pause приходит как отдельная клавиша Break
         if key == getattr(Key, 'pause', None) or getattr(key, 'vk', None) == XK_BREAK:
             if self.pressed_modifiers & self._shift:
-                self.tasks.put(('toggle',))
+                self.tracker.on_toggle()
             else:
-                word = ''.join(self.word)
-                self.tasks.put(('manual', word))
-                source = detect_layout(word)
-                if source:
-                    self.word = list(convert(word, source))
-                    self.manual = True
+                self.tracker.on_manual()
             return
 
         if self.pressed_modifiers - self._shift:
-            # Ctrl+C, Alt+Tab и т.п. — курсор мог уехать
-            self._reset()
-            return
-
-        if key == Key.space:
-            if self.word:
-                self.tasks.put(('word', ''.join(self.word), self.adjacent, not self.manual))
-                self.word = []
-                self.manual = False
-                self.adjacent = self.after_space = True
-            else:
-                self._reset()  # два пробела подряд — новое предложение/фрагмент
-            return
-
-        if key == Key.backspace:
-            if self.word:
-                self.word.pop()
-            else:
-                self._reset()
-            return
-
-        char = getattr(key, 'char', None)
-        if char and char.isprintable():
-            if not self.word and not self.after_space:
-                self.adjacent = False
-            self.after_space = False
-            self.word.append(char)
-            return
-
-        # Enter, Tab, стрелки, Home, Delete, F1...
-        self._reset()
+            self.tracker.reset()  # Ctrl+C, Alt+Tab и т.п.
+        elif key == Key.space:
+            self.tracker.on_space()
+        elif key == Key.backspace:
+            self.tracker.on_backspace()
+        elif getattr(key, 'char', None) and key.char.isprintable():
+            self.tracker.on_char(key.char)
+        else:
+            self.tracker.reset()  # Enter, Tab, стрелки, Home, Delete, F1...
 
     def on_release(self, key, injected=False):
         self.pressed_modifiers.discard(key)
 
     def on_click(self, x, y, button, pressed, injected=False):
         if pressed:
-            self._reset()
-
-    def _reset(self):
-        self.word = []
-        self.adjacent = self.after_space = self.manual = False
-        self.tasks.put(('reset',))
+            self.tracker.reset()
 
     def worker(self):
         while True:
             task = self.tasks.get()
             try:
-                self._handle(task)
+                self._apply(process_task(self.engine, task))
             except Exception as error:  # переключатель не должен падать из-за одного слова
                 print(f'Ошибка: {error!r}')
-
-    def _handle(self, task):
-        kind = task[0]
-        if kind == 'reset':
-            self.engine.reset()
-        elif kind == 'toggle':
-            print('✅ Автопереключение включено' if self.engine.toggle() else '⏸  Автопереключение выключено')
-        elif kind == 'word':
-            self._apply(self.engine.on_word(*task[1:]))
-        elif kind == 'manual':
-            self._apply(self.engine.on_manual(task[1]))
 
     def _apply(self, replacement: Optional[Replacement]):
         if replacement is None:
@@ -274,12 +294,17 @@ class KeyboardHook:
 
 
 def main():
+    if platform.system() == 'Darwin':
+        from macos import MacKeyboardHook as Hook
+    else:
+        Hook = KeyboardHook
     print('Загружаю словари...')
     engine = Engine(Detector())
-    print('✅ Переключатель раскладки запущен. Pause — отменить замену, Shift+Pause — вкл/выкл.')
+    hook = Hook(engine)
+    print(f'✅ Переключатель раскладки запущен. {hook.HOTKEYS}.')
     print('   Закройте это окно или нажмите Ctrl+C, чтобы выйти.')
     try:
-        KeyboardHook(engine).run()
+        hook.run()
     except KeyboardInterrupt:
         pass
 

@@ -40,6 +40,16 @@ _NATURAL_PREFIX = set('("\'')
 _NATURAL_SUFFIX = set('.,;:!?)"\'')
 
 
+def set_key_tables(en_to_ru: dict, ru_to_en: dict) -> None:
+    """Заменяет таблицы перевода (на Mac раскладки отличаются от Windows)."""
+    if not all(ch in en_to_ru for ch in 'qwertyuiopasdfghjklzxcvbnm'):
+        return  # что-то не так с раскладками — остаёмся на стандартных таблицах
+    EN_TO_RU.clear()
+    EN_TO_RU.update(en_to_ru)
+    RU_TO_EN.clear()
+    RU_TO_EN.update(ru_to_en)
+
+
 def convert(text: str, source: str) -> str:
     """Перепечатывает текст так, будто те же клавиши нажаты в другой раскладке."""
     table = EN_TO_RU if source == EN else RU_TO_EN
