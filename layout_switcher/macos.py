@@ -26,6 +26,7 @@ LETTER_KEYS = (50, 18, 19, 20, 21, 23, 22, 26, 28, 25, 29, 27, 24,
                12, 13, 14, 15, 17, 16, 32, 34, 31, 35, 33, 30, 42,
                0, 1, 2, 3, 5, 4, 38, 40, 37, 41, 39,
                6, 7, 8, 9, 11, 45, 46, 43, 47, 44, 10)
+DEBUG = bool(os.environ.get('LAYOUT_SWITCHER_DEBUG'))
 MAGIC = 0x52555345  # метка на наших собственных нажатиях, чтобы не принять их за пользовательские
 
 PERMISSIONS_HELP = '''
@@ -56,6 +57,7 @@ class InputSources:
         carbon.TISCreateInputSourceList.argtypes = (ctypes.c_void_p, ctypes.c_bool)
         carbon.TISCreateInputSourceList.restype = ctypes.c_void_p
         carbon.TISCopyCurrentKeyboardInputSource.restype = ctypes.c_void_p
+        carbon.TISCopyCurrentKeyboardLayoutInputSource.restype = ctypes.c_void_p
         carbon.TISGetInputSourceProperty.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
         carbon.TISGetInputSourceProperty.restype = ctypes.c_void_p
         carbon.TISSelectInputSource.argtypes = (ctypes.c_void_p,)
@@ -84,6 +86,7 @@ class InputSources:
         self._ascii_key = ctypes.c_void_p.in_dll(carbon, 'kTISPropertyInputSourceIsASCIICapable').value
         self._selectable_key = ctypes.c_void_p.in_dll(carbon, 'kTISPropertyInputSourceIsSelectCapable').value
         self._layout_key = ctypes.c_void_p.in_dll(carbon, 'kTISPropertyUnicodeKeyLayoutData').value
+        self._current = (None, None, None)  # (id, источник, данные раскладки) — кэш для translate_key
 
     def _source_id(self, source) -> str:
         value = self._carbon.TISGetInputSourceProperty(source, self._id_key)
@@ -137,6 +140,35 @@ class InputSources:
             return {code: (self._translate(layout, code, 0), self._translate(layout, code, 0x02))
                     for code in LETTER_KEYS}
         return self._with_sources(action)
+
+    def translate_key(self, keycode: int, flags: int) -> str:
+        """Символ клавиши в текущей раскладке.
+
+        Строке из самого события верить нельзя: после переключения раскладки
+        macOS какое-то время кладёт туда символы прежней раскладки.
+        """
+        source = self._carbon.TISCopyCurrentKeyboardLayoutInputSource()
+        if not source:
+            return ''
+        source_id = self._source_id(source)
+        if source_id == self._current[0]:
+            self._cf.CFRelease(source)
+        else:
+            if self._current[1]:
+                self._cf.CFRelease(self._current[1])
+            data = self._carbon.TISGetInputSourceProperty(source, self._layout_key)
+            self._current = (source_id, source, data and self._cf.CFDataGetBytePtr(data))
+        layout = self._current[2]
+        if not layout:
+            return ''
+        modifiers = 0
+        if flags & Quartz.kCGEventFlagMaskShift:
+            modifiers |= 0x02
+        if flags & Quartz.kCGEventFlagMaskAlphaShift:
+            modifiers |= 0x04
+        if flags & Quartz.kCGEventFlagMaskAlternate:
+            modifiers |= 0x08
+        return self._translate(layout, keycode, modifiers)
 
     def _translate(self, layout, keycode: int, modifiers: int) -> str:
         dead_keys = ctypes.c_uint32(0)
@@ -249,8 +281,10 @@ class MacKeyboardHook:
         elif keycode == KEY_DELETE:
             self.tracker.on_backspace()
         else:
-            length, chars = Quartz.CGEventKeyboardGetUnicodeString(event, 4, None, None)
-            if length and chars and chars.isprintable():
+            chars = self.input_sources.translate_key(keycode, flags)
+            if not chars:
+                _, chars = Quartz.CGEventKeyboardGetUnicodeString(event, 4, None, None)
+            if chars and chars.isprintable():
                 self.tracker.on_char(chars)
             else:
                 self.tracker.reset()  # Enter, Tab, Esc, стрелки, F1...
@@ -280,6 +314,8 @@ class MacKeyboardHook:
                 task = self.tasks.get_nowait()
             except queue.Empty:
                 return
+            if DEBUG:
+                print('  [debug]', task)
             try:
                 replacement = process_task(self.engine, task)
                 if replacement:
