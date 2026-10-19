@@ -507,13 +507,13 @@ async def finalize(app: Application, uid: int, iid: int, status_message) -> None
             except gdrive.DriveError as ex:
                 logger.warning("Папка проверки %s не создана: %s", iid, ex)
         pdf, contents = await build_report(bot, insp)
-        await bot.send_document(
-            uid, pdf, filename=f"Проверка_{iid}_{_safe_filename(insp['company'])}_{_safe_filename(insp['zhk'])}.pdf")
+        pdf_sent = await _try_send_pdf(bot, uid, insp, pdf)
 
         error = await sync_to_google(bot, insp, pdf, contents) if gdrive.enabled() else "Google Диск не подключён"
         insp = db.get_inspection(iid)
-        await bot.send_message(uid, result_text(insp, error), parse_mode=ParseMode.HTML,
-                               disable_web_page_preview=True, reply_markup=result_keyboard(insp, error))
+        await bot.send_message(uid, result_text(insp, error, pdf_sent), parse_mode=ParseMode.HTML,
+                               disable_web_page_preview=True,
+                               reply_markup=result_keyboard(insp, error, pdf_sent))
     except Exception:
         logger.exception("Ошибка при завершении проверки %s", iid)
         await bot.send_message(uid, "⚠️ Не удалось сформировать отчёт. Проверка сохранена — "
@@ -527,7 +527,18 @@ async def finalize(app: Application, uid: int, iid: int, status_message) -> None
             pass
 
 
-def result_text(insp, error: str | None) -> str:
+async def _try_send_pdf(bot: Bot, uid: int, insp, pdf: bytes) -> bool:
+    """Шлёт PDF в чат. False — если Telegram отклонил его (например, слишком большой)."""
+    name = f"Проверка_{insp['id']}_{_safe_filename(insp['company'])}_{_safe_filename(insp['zhk'])}.pdf"
+    try:
+        await bot.send_document(uid, pdf, filename=name)
+        return True
+    except TelegramError as ex:
+        logger.warning("PDF проверки %s не отправлен в чат (%s КБ): %s", insp["id"], len(pdf) // 1024, ex)
+        return False
+
+
+def result_text(insp, error: str | None, pdf_sent: bool = True) -> str:
     score = total_score(db.checked_criteria(insp["id"]))
     lines = [f"✅ <b>Проверка №{insp['id']} завершена</b>",
              f"{e(insp['company'])} / ЖК {e(insp['zhk'])}",
@@ -535,6 +546,12 @@ def result_text(insp, error: str | None) -> str:
     missing = unvisited_items(insp)
     if missing:
         lines.append(f"Не проверены пункты: {', '.join(map(str, missing))}")
+    if not pdf_sent:
+        if insp["report_url"]:
+            lines.append("\n📄 Отчёт получился большим для Telegram — откройте его кнопкой ниже (он на Диске).")
+        else:
+            lines.append("\n⚠️ Отчёт слишком большой для Telegram. Фото сохранены на Диске; "
+                         "откройте папку проверки кнопкой ниже.")
     if error:
         lines.append(f"\n⚠️ В Google не сохранено: {e(error)}")
     elif insp["folder_url"]:
@@ -542,8 +559,10 @@ def result_text(insp, error: str | None) -> str:
     return "\n".join(lines)
 
 
-def result_keyboard(insp, error: str | None) -> InlineKeyboardMarkup:
+def result_keyboard(insp, error: str | None, pdf_sent: bool = True) -> InlineKeyboardMarkup:
     rows = []
+    if not pdf_sent and insp["report_url"]:
+        rows.append([Btn("📄 Открыть PDF-отчёт", url=insp["report_url"])])
     if insp["folder_url"]:
         rows.append([Btn("📁 Папка проверки", url=insp["folder_url"])])
     sheet_url = db.get_setting("spreadsheet_url")
@@ -562,10 +581,12 @@ async def resync(app: Application, uid: int, iid: int, status_message) -> None:
     try:
         insp = db.get_inspection(iid)
         pdf, contents = await build_report(bot, insp)
+        pdf_sent = await _try_send_pdf(bot, uid, insp, pdf) if not insp["synced"] else True
         error = await sync_to_google(bot, insp, pdf, contents) if gdrive.enabled() else "Google Диск не подключён"
         insp = db.get_inspection(iid)
-        await bot.send_message(uid, result_text(insp, error), parse_mode=ParseMode.HTML,
-                               disable_web_page_preview=True, reply_markup=result_keyboard(insp, error))
+        await bot.send_message(uid, result_text(insp, error, pdf_sent), parse_mode=ParseMode.HTML,
+                               disable_web_page_preview=True,
+                               reply_markup=result_keyboard(insp, error, pdf_sent))
     except Exception:
         logger.exception("Повторная отправка проверки %s не удалась", iid)
         await bot.send_message(uid, "⚠️ Снова не получилось. Попробуйте позже.",

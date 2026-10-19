@@ -9,7 +9,8 @@ from PIL import Image, ImageOps
 from . import config
 from .checklist import ITEMS, MAX_POINTS, item_score
 
-MAX_IMAGE_SIDE = 1600
+MAX_IMAGE_SIDE = 1400
+JPEG_QUALITY = 70
 
 
 @dataclass
@@ -38,12 +39,21 @@ class _PDF(FPDF):
         self.set_text_color(0)
 
 
-def _prepare_image(raw: bytes) -> Image.Image:
+def _prepare_image(raw: bytes) -> tuple[io.BytesIO, int, int]:
+    """Фото → сжатый JPEG. Возвращает (поток, ширина, высота).
+
+    JPEG-поток кладётся в PDF как есть (DCTDecode), поэтому страницы с фото
+    весят в разы меньше, чем при хранении без сжатия, — иначе Telegram
+    отклоняет отчёт как слишком большой файл.
+    """
     img = Image.open(io.BytesIO(raw))
     img = ImageOps.exif_transpose(img)  # фото, отправленные файлом, не будут повёрнуты
     img = img.convert("RGB")
     img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
-    return img
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=JPEG_QUALITY, optimize=True)
+    buf.seek(0)
+    return buf, img.width, img.height
 
 
 def build(data: ReportData) -> bytes:
@@ -129,7 +139,7 @@ def build(data: ReportData) -> bytes:
                                new_x="LMARGIN", new_y="NEXT")
                 continue
             try:
-                img = _prepare_image(raw)
+                stream, iw, ih = _prepare_image(raw)
             except Exception:
                 pdf.multi_cell(width, 6, f"Не удалось открыть изображение «{name}».",
                                new_x="LMARGIN", new_y="NEXT")
@@ -138,13 +148,13 @@ def build(data: ReportData) -> bytes:
             # по два фото на страницу.
             max_h = pdf.eph * 0.46
             w = width
-            h = w * img.height / img.width
+            h = w * ih / iw
             if h > max_h:
                 h = max_h
-                w = h * img.width / img.height
+                w = h * iw / ih
             if pdf.get_y() + h > pdf.page_break_trigger:
                 pdf.add_page()
-            pdf.image(img, x=pdf.l_margin + (width - w) / 2, w=w, h=h)
+            pdf.image(stream, x=pdf.l_margin + (width - w) / 2, w=w, h=h)
             pdf.ln(4)
 
     return bytes(pdf.output())
