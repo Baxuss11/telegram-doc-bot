@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
     status TEXT NOT NULL DEFAULT 'new', -- new / pending / allowed / blocked
     mode TEXT NOT NULL DEFAULT 'idle',  -- idle / await_name / await_company / await_zhk / checklist
     draft_company TEXT,
+    draft_kind TEXT,
     card_message_id INTEGER,
     created_at TEXT
 );
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS inspections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     inspector_id INTEGER NOT NULL,
     inspector_name TEXT,
+    kind TEXT NOT NULL DEFAULT 'tech',  -- tech / legal
     company TEXT NOT NULL,
     zhk TEXT NOT NULL,
     folder_label TEXT NOT NULL,
@@ -76,6 +78,17 @@ def init() -> None:
     _conn.row_factory = sqlite3.Row
     _conn.execute("PRAGMA journal_mode=WAL")
     _conn.executescript(SCHEMA)
+    _migrate()
+
+
+def _migrate() -> None:
+    """Добавляет новые колонки в базу, созданную старой версией бота."""
+    cols = {r["name"] for r in _db().execute("PRAGMA table_info(inspections)")}
+    if "kind" not in cols:
+        _db().execute("ALTER TABLE inspections ADD COLUMN kind TEXT NOT NULL DEFAULT 'tech'")
+    ucols = {r["name"] for r in _db().execute("PRAGMA table_info(users)")}
+    if "draft_kind" not in ucols:
+        _db().execute("ALTER TABLE users ADD COLUMN draft_kind TEXT")
 
 
 def _db() -> sqlite3.Connection:
@@ -121,12 +134,13 @@ def users_with_status(status: str) -> list[sqlite3.Row]:
 
 # --- Проверки ---
 
-def create_inspection(inspector_id: int, inspector_name: str, company: str, zhk: str) -> int:
+def create_inspection(inspector_id: int, inspector_name: str, kind: str,
+                      company: str, zhk: str) -> int:
     started = now()
     cur = _db().execute(
-        "INSERT INTO inspections (inspector_id, inspector_name, company, zhk, folder_label, started_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (inspector_id, inspector_name, company, zhk,
+        "INSERT INTO inspections (inspector_id, inspector_name, kind, company, zhk, folder_label, started_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (inspector_id, inspector_name, kind, company, zhk,
          started.strftime("%Y-%m-%d %H.%M"), started.isoformat()),
     )
     return cur.lastrowid

@@ -24,7 +24,7 @@ from telegram.ext import (
 )
 
 from . import config, db, gdrive, report
-from .checklist import ITEMS, ITEMS_BY_KEY, MAX_POINTS, grade_for, item_score, total_score
+from .checklist import MODULES, item_score, module_for, module_total
 
 logger = logging.getLogger(__name__)
 
@@ -136,16 +136,21 @@ def menu_screen(user) -> tuple[str, InlineKeyboardMarkup]:
     active = db.active_inspection(uid)
     rows = []
     if active:
-        rows.append([Btn(f"▶️ Продолжить: {active['company']} / {active['zhk']}", callback_data="cont")])
-    rows.append([Btn("🆕 Новая проверка", callback_data="new")])
+        mod = module_for(active["kind"])
+        rows.append([Btn(f"▶️ Продолжить ({mod.emoji} {active['company']} / {active['zhk']})",
+                         callback_data="cont")])
+    rows.append([Btn("⚖️ Юридическая проверка", callback_data="new:legal")])
+    rows.append([Btn("🔧 Техническая проверка", callback_data="new:tech")])
     sheet_url = db.get_setting("spreadsheet_url")
     if sheet_url:
         rows.append([Btn("📊 Таблица рейтинга", url=sheet_url)])
     if is_admin(uid):
         rows.append([Btn("👥 Сотрудники", callback_data="staff")])
-    text = (f"👷 {e(user['display_name'] or user['tg_name'])}, это бот технического рейтинга ОСК.\n\n"
-            "Бот проведёт вас по всем пунктам проверки: фотографируете документ, "
-            "отмечаете галочками, что есть, — баллы и отчёт бот посчитает сам.")
+    text = (f"👷 {e(user['display_name'] or user['tg_name'])}, это бот рейтинга ОСК.\n\n"
+            "Выберите раздел проверки. Бот проведёт по пунктам: фотографируете документ, "
+            "отмечаете, что есть, — баллы и отчёт посчитает сам.\n\n"
+            "⚖️ Юридическая — документы, земля, договор (итог в %).\n"
+            "🔧 Техническая — журналы, лаборатория, графики (итог в баллах).")
     return text, InlineKeyboardMarkup(rows)
 
 
@@ -158,11 +163,15 @@ async def show_menu(bot: Bot, user, query=None) -> None:
         await bot.send_message(user["tg_id"], text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
-async def ask_company(bot: Bot, uid: int, query=None) -> None:
-    db.set_user(uid, mode="await_company")
+async def ask_company(bot: Bot, uid: int, query=None, kind: str | None = None) -> None:
+    fields = {"mode": "await_company"}
+    if kind:
+        fields["draft_kind"] = kind
+    db.set_user(uid, **fields)
+    mod = module_for(db.get_user(uid)["draft_kind"] or "tech")
     rows = [[Btn(r["company"], callback_data=f"co:{r['id']}")] for r in db.recent_companies()]
     rows.append([Btn("🏠 Меню", callback_data="menu")])
-    text = "🏢 Напишите название <b>строительной компании</b>"
+    text = f"{mod.emoji} <b>{e(mod.title)}</b>\n\n🏢 Напишите название <b>строительной компании</b>"
     if len(rows) > 1:
         text += " или выберите из уже проверенных"
     text += ":"
@@ -192,9 +201,10 @@ async def start_inspection(bot: Bot, user, zhk: str, query=None) -> None:
     if not company:
         await ask_company(bot, uid, query)
         return
-    inspection_id = db.create_inspection(uid, user["display_name"] or user["tg_name"], company, zhk)
+    kind = user["draft_kind"] or "tech"
+    inspection_id = db.create_inspection(uid, user["display_name"] or user["tg_name"], kind, company, zhk)
     db.set_user(uid, mode="checklist", draft_company=None)
-    logger.info("Проверка %s начата: %s / %s (%s)", inspection_id, company, zhk, uid)
+    logger.info("Проверка %s (%s) начата: %s / %s (%s)", inspection_id, kind, company, zhk, uid)
     insp = db.get_inspection(inspection_id)
     if query:
         await edit_card(query, insp)
@@ -206,15 +216,16 @@ async def start_inspection(bot: Bot, user, zhk: str, query=None) -> None:
 
 def render_card(insp) -> tuple[str, InlineKeyboardMarkup]:
     iid = insp["id"]
+    mod = module_for(insp["kind"])
     idx = insp["current_item"]
-    item = ITEMS[idx]
+    item = mod.items[idx]
     checked = db.checked_criteria(iid)
     state = db.item_states(iid).get(item.key)
     n_photos = db.photo_counts(iid).get(item.key, 0)
 
     lines = [
         f"🏗 <b>{e(insp['company'])}</b> · ЖК {e(insp['zhk'])}",
-        f"Пункт {idx + 1} из {len(ITEMS)} · {e(item.group)}",
+        f"{mod.emoji} {mod.title} · пункт {idx + 1} из {len(mod.items)}",
         "",
         f"<b>{idx + 1}. {e(item.title)}</b>",
         f"<i>{e(item.hint)}</i>",
@@ -222,15 +233,18 @@ def render_card(insp) -> tuple[str, InlineKeyboardMarkup]:
         f"📷 Фото: {n_photos}    ⭐ Баллы: {item_score(item, checked)} из {item.max_points}",
     ]
     if state and state["absent"]:
-        lines.append("🚫 Отмечено: документа нет")
+        lines.append("🚫 Отмечено: отсутствует")
     if state and state["comment"]:
         lines.append(f"💬 {e(state['comment'])}")
-    lines += ["", "Пришлите фото документа (можно несколько), отметьте критерии. "
+    pick = "выберите один вариант" if item.single else "отметьте, что есть"
+    lines += ["", f"Пришлите фото (можно несколько), {pick}. "
                   "Текст сообщением сохранится как комментарий («-» удалит его)."]
 
-    rows = [[Btn(f"{'✅' if c.key in checked else '⬜'} {c.title} · {c.points} б.",
-                 callback_data=f"t:{iid}:{c.key}")] for c in item.criteria]
-    tools = [Btn("🚫 Документа нет", callback_data=f"abs:{iid}")]
+    rows = []
+    for ch in item.choices:
+        mark = "🔘" if (item.single and ch.key in checked) else ("✅" if ch.key in checked else "⬜")
+        rows.append([Btn(f"{mark} {ch.title} · {ch.points} б.", callback_data=f"t:{iid}:{ch.key}")])
+    tools = [Btn("🚫 Отсутствует", callback_data=f"abs:{iid}")]
     if n_photos:
         tools.append(Btn("🗑 Удалить фото", callback_data=f"delph:{iid}"))
     rows.append(tools)
@@ -238,7 +252,7 @@ def render_card(insp) -> tuple[str, InlineKeyboardMarkup]:
     if idx > 0:
         nav.append(Btn("⬅️ Назад", callback_data=f"go:{iid}:{idx - 1}"))
     nav.append(Btn("📑 Пункты", callback_data=f"list:{iid}"))
-    if idx < len(ITEMS) - 1:
+    if idx < len(mod.items) - 1:
         nav.append(Btn("Далее ➡️", callback_data=f"next:{iid}"))
     rows.append(nav)
     rows.append([Btn("🏁 Завершить проверку", callback_data=f"fin:{iid}"),
@@ -293,34 +307,43 @@ def schedule_card_refresh(app: Application, uid: int) -> None:
     _refresh_tasks[uid] = task
 
 
+def _score_line(mod, score: int) -> str:
+    if mod.scoring == "percent":
+        return f"{mod.percent(score)}% ({score} из {mod.max_points}) — {mod.grade(score)}"
+    return f"{score} из {mod.max_points} баллов — {mod.grade(score)}"
+
+
 def list_screen(insp) -> tuple[str, InlineKeyboardMarkup]:
     iid = insp["id"]
+    mod = module_for(insp["kind"])
     checked = db.checked_criteria(iid)
     states = db.item_states(iid)
     rows = []
-    for n, item in enumerate(ITEMS):
+    for n, item in enumerate(mod.items):
         st = states.get(item.key)
         icon = "⬜" if not st or not st["visited"] else ("🚫" if st["absent"] else "✅")
         rows.append([Btn(f"{icon} {n + 1}. {item.title} — {item_score(item, checked)}/{item.max_points}",
                          callback_data=f"go:{iid}:{n}")])
     rows.append([Btn("🏁 Завершить проверку", callback_data=f"fin:{iid}")])
-    text = (f"📑 <b>Все пункты</b> · {e(insp['company'])} / {e(insp['zhk'])}\n"
-            f"Набрано: {total_score(checked)} из {MAX_POINTS}\n\n"
-            "✅ проверен · 🚫 документа нет · ⬜ ещё не смотрели\nНажмите на пункт, чтобы перейти к нему.")
+    text = (f"📑 <b>Все пункты</b> · {mod.emoji} {mod.title}\n{e(insp['company'])} / {e(insp['zhk'])}\n"
+            f"Набрано: {_score_line(mod, module_total(mod, checked))}\n\n"
+            "✅ проверен · 🚫 отсутствует · ⬜ ещё не смотрели\nНажмите на пункт, чтобы перейти к нему.")
     return text, InlineKeyboardMarkup(rows)
 
 
 def unvisited_items(insp) -> list[int]:
+    mod = module_for(insp["kind"])
     states = db.item_states(insp["id"])
-    return [n + 1 for n, item in enumerate(ITEMS)
+    return [n + 1 for n, item in enumerate(mod.items)
             if not (states.get(item.key) and states[item.key]["visited"])]
 
 
 def finish_screen(insp) -> tuple[str, InlineKeyboardMarkup]:
     iid = insp["id"]
-    score = total_score(db.checked_criteria(iid))
-    lines = [f"🏁 <b>Завершение проверки</b>\n{e(insp['company'])} / {e(insp['zhk'])}\n",
-             f"Итог: <b>{score} из {MAX_POINTS}</b> — {grade_for(score)}"]
+    mod = module_for(insp["kind"])
+    score = module_total(mod, db.checked_criteria(iid))
+    lines = [f"🏁 <b>Завершение проверки</b>\n{mod.emoji} {mod.title}\n{e(insp['company'])} / {e(insp['zhk'])}\n",
+             f"Итог: <b>{_score_line(mod, score)}</b>"]
     missing = unvisited_items(insp)
     if missing:
         lines.append(f"\n⚠️ Не проверены пункты: {', '.join(map(str, missing))}. "
@@ -334,13 +357,18 @@ def finish_screen(insp) -> tuple[str, InlineKeyboardMarkup]:
 
 # ============================ Google Диск ============================
 
+def _kind_label(insp) -> str:
+    return "Юридическая" if insp["kind"] == "legal" else "Техническая"
+
+
 def _base_path(insp) -> list[str]:
-    return [insp["company"], insp["zhk"], insp["folder_label"]]
+    return [insp["company"], insp["zhk"], f"{_kind_label(insp)} {insp['folder_label']}"]
 
 
-def _item_folder(item_key: str) -> str:
-    n = next(i for i, it in enumerate(ITEMS, 1) if it.key == item_key)
-    return f"{n:02d} {ITEMS_BY_KEY[item_key].title}"
+def _item_folder(insp, item_key: str) -> str:
+    mod = module_for(insp["kind"])
+    n = next(i for i, it in enumerate(mod.items, 1) if it.key == item_key)
+    return f"{n:02d} {mod.items_by_key[item_key].title}"
 
 
 def _photo_name(photo) -> tuple[str, str]:
@@ -370,7 +398,7 @@ async def upload_photo(bot: Bot, photo_id: int, content: bytes | None = None) ->
             if content is None:
                 content = await _download(bot, photo["tg_file_id"])
             name, mime = _photo_name(photo)
-            res = await gdrive.upload(_base_path(insp) + [_item_folder(photo["item_key"])],
+            res = await gdrive.upload(_base_path(insp) + [_item_folder(insp, photo["item_key"])],
                                       name, mime, content)
         except (gdrive.DriveError, TelegramError) as ex:
             logger.warning("Фото %s не загружено на Диск: %s", photo_id, ex)
@@ -414,12 +442,13 @@ async def build_report(bot: Bot, insp) -> tuple[bytes, dict[int, bytes]]:
             continue
         contents[photo["id"]] = raw
         files.setdefault(photo["item_key"], []).append((raw, photo["kind"], photo["file_name"] or ""))
+    mod = module_for(insp["kind"])
     checked = db.checked_criteria(iid)
-    score = total_score(checked)
+    score = module_total(mod, checked)
     data = report.ReportData(
-        inspection_id=iid, company=insp["company"], zhk=insp["zhk"],
+        inspection_id=iid, kind=insp["kind"], company=insp["company"], zhk=insp["zhk"],
         inspector=insp["inspector_name"] or "", started=_date(insp["started_at"]),
-        finished=_date(insp["finished_at"]), score=score, grade=grade_for(score),
+        finished=_date(insp["finished_at"]), score=score, grade=mod.grade(score),
         checked=checked, states={k: dict(v) for k, v in db.item_states(iid).items()},
         files=files, folder_url=insp["folder_url"],
     )
@@ -430,34 +459,34 @@ async def build_report(bot: Bot, insp) -> tuple[bytes, dict[int, bytes]]:
 def sheet_rows(insp) -> tuple[list[str], list[list], list[str], list[list]]:
     """Строки для листов «Рейтинг» (одна строка на проверку) и «Детали» (по критериям)."""
     iid = insp["id"]
+    mod = module_for(insp["kind"])
     checked = db.checked_criteria(iid)
     states = db.item_states(iid)
     counts = db.photo_counts(iid)
-    score = total_score(checked)
+    score = module_total(mod, checked)
     date = _date(insp["started_at"])[:10]
     head = [iid, date, insp["company"], insp["zhk"], insp["inspector_name"]]
 
-    no_photo = [str(n) for n, it in enumerate(ITEMS, 1)
+    no_photo = [str(n) for n, it in enumerate(mod.items, 1)
                 if it.max_points and item_score(it, checked) and not counts.get(it.key)]
     summary_headers = (["№ проверки", "Дата", "Компания", "ЖК", "Проверяющий"]
                        + [f"{n}. {it.title}" + (f" (из {it.max_points})" if it.max_points else "")
-                          for n, it in enumerate(ITEMS, 1)]
+                          for n, it in enumerate(mod.items, 1)]
                        + ["Итого", "Макс.", "%", "Оценка", "Не проверены",
                           "Баллы без фото (пункты)", "Папка с фото", "PDF-отчёт"])
-    # Пункты без баллов (авторский надзор) — просто «есть / нет».
     per_item = [item_score(it, checked) if it.max_points else
-                ("есть" if any(c.key in checked for c in it.criteria) else "нет") for it in ITEMS]
+                ("есть" if any(c.key in checked for c in it.choices) else "нет") for it in mod.items]
     summary = [head + per_item
-               + [score, MAX_POINTS, round(100 * score / MAX_POINTS) if MAX_POINTS else 0,
-                  grade_for(score), ", ".join(map(str, unvisited_items(insp))),
+               + [score, mod.max_points, mod.percent(score),
+                  mod.grade(score), ", ".join(map(str, unvisited_items(insp))),
                   ", ".join(no_photo), insp["folder_url"] or "", insp["report_url"] or ""]]
 
-    detail_headers = ["№ проверки", "Дата", "Компания", "ЖК", "Проверяющий", "Пункт", "Критерий",
-                      "Отмечено", "Баллы", "Макс.", "Фото, шт.", "Документа нет", "Комментарий"]
+    detail_headers = ["№ проверки", "Дата", "Компания", "ЖК", "Проверяющий", "Пункт", "Вариант/критерий",
+                      "Отмечено", "Баллы", "Макс.", "Фото, шт.", "Отсутствует", "Комментарий"]
     details = []
-    for n, it in enumerate(ITEMS, 1):
+    for n, it in enumerate(mod.items, 1):
         st = states.get(it.key)
-        for i, c in enumerate(it.criteria):
+        for i, c in enumerate(it.choices):
             first = i == 0
             details.append(head + [
                 f"{n}. {it.title}", c.title, "да" if c.key in checked else "нет",
@@ -483,8 +512,9 @@ async def sync_to_google(bot: Bot, insp, pdf: bytes, contents: dict[int, bytes])
         res = await gdrive.upload(_base_path(insp), pdf_name, "application/pdf", pdf)
         db.set_inspection(iid, report_url=res["fileUrl"])
         sh, srows, dh, drows = sheet_rows(db.get_inspection(iid))
-        res = await gdrive.append_rows("Рейтинг", sh, srows)
-        await gdrive.append_rows("Детали", dh, drows)
+        suffix = "Юр" if insp["kind"] == "legal" else "Тех"
+        res = await gdrive.append_rows(f"Рейтинг — {suffix}", sh, srows)
+        await gdrive.append_rows(f"Детали — {suffix}", dh, drows)
     except gdrive.DriveError as ex:
         logger.warning("Проверка %s не сохранена в Google: %s", iid, ex)
         return str(ex)
@@ -539,10 +569,11 @@ async def _try_send_pdf(bot: Bot, uid: int, insp, pdf: bytes) -> bool:
 
 
 def result_text(insp, error: str | None, pdf_sent: bool = True) -> str:
-    score = total_score(db.checked_criteria(insp["id"]))
-    lines = [f"✅ <b>Проверка №{insp['id']} завершена</b>",
+    mod = module_for(insp["kind"])
+    score = module_total(mod, db.checked_criteria(insp["id"]))
+    lines = [f"✅ <b>Проверка №{insp['id']} завершена</b> · {mod.emoji} {mod.title}",
              f"{e(insp['company'])} / ЖК {e(insp['zhk'])}",
-             f"\nИтог: <b>{score} из {MAX_POINTS}</b> — {grade_for(score)}"]
+             f"\nИтог: <b>{_score_line(mod, score)}</b>"]
     missing = unvisited_items(insp)
     if missing:
         lines.append(f"Не проверены пункты: {', '.join(map(str, missing))}")
@@ -618,12 +649,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "📘 <b>Как проводить проверку</b>\n\n"
-        "1. /start → «🆕 Новая проверка», укажите компанию и ЖК.\n"
+        "1. /start → выберите раздел: ⚖️ Юридическая или 🔧 Техническая. Укажите компанию и ЖК.\n"
         "2. На каждом пункте сфотографируйте документ (можно несколько фото или PDF).\n"
-        "3. Отметьте галочками критерии, которые выполнены. Нет документа — «🚫 Документа нет».\n"
+        "3. В юридической части — выберите один вариант; в технической — отметьте галочками, что есть. "
+        "Если документа нет — «🚫 Отсутствует».\n"
         "4. Замечание по пункту — просто напишите его сообщением.\n"
         "5. «📑 Пункты» — список всех пунктов, можно вернуться к любому.\n"
         "6. «🏁 Завершить проверку» — бот пришлёт PDF-отчёт и сохранит всё на Google Диск.\n\n"
+        "Юридическая и техническая — отдельные проверки по объекту. "
         "Если прервались — /start → «▶️ Продолжить». Ничего не потеряется.",
         parse_mode=ParseMode.HTML)
 
@@ -660,7 +693,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif mode == "await_zhk":
         await start_inspection(context.bot, user, text)
     elif mode == "checklist" and (insp := db.active_inspection(uid)):
-        item = ITEMS[insp["current_item"]]
+        item = module_for(insp["kind"]).items[insp["current_item"]]
         comment = None if text in ("-", "—") else update.message.text.strip()[:500]
         db.set_item_state(insp["id"], item.key, comment=comment, visited=1)
         await send_card(context.bot, uid, insp)
@@ -691,7 +724,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         kind = "pdf" if doc.mime_type == "application/pdf" else "image"
         file_id, mime, name = doc.file_id, doc.mime_type, doc.file_name
 
-    item = ITEMS[insp["current_item"]]
+    item = module_for(insp["kind"]).items[insp["current_item"]]
     photo_id = db.add_photo(insp["id"], item.key, file_id, kind, mime, name)
     db.set_item_state(insp["id"], item.key, visited=1, absent=0)
     if gdrive.enabled():
@@ -727,15 +760,18 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if action == "new":
         await query.answer()
+        kind = rest if rest in MODULES else "tech"
+        db.set_user(uid, draft_kind=kind)
         active = db.active_inspection(uid)
         if active:
-            await _edit(query, f"У вас есть незавершённая проверка:\n<b>{e(active['company'])} / "
-                               f"{e(active['zhk'])}</b>\n\nЧто сделать?",
+            amod = module_for(active["kind"])
+            await _edit(query, f"У вас есть незавершённая проверка:\n<b>{amod.emoji} {amod.title} · "
+                               f"{e(active['company'])} / {e(active['zhk'])}</b>\n\nЧто сделать?",
                         _kb([Btn("▶️ Продолжить её", callback_data="cont")],
                             [Btn("🗑 Удалить её и начать новую", callback_data="newforce")],
                             [Btn("🏠 Меню", callback_data="menu")]))
         else:
-            await ask_company(context.bot, uid, query)
+            await ask_company(context.bot, uid, query, kind=kind)
         return
     if action == "newforce":
         await query.answer()
@@ -797,22 +833,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             pass
         return
     iid = insp["id"]
-    item = ITEMS[insp["current_item"]]
+    mod = module_for(insp["kind"])
+    item = mod.items[insp["current_item"]]
     db.set_user(uid, mode="checklist")
 
     if action == "t":
-        if arg not in {c.key for c in item.criteria}:
+        keys = {c.key for c in item.choices}
+        if arg not in keys:
             await query.answer()
             return
+        if item.single:  # один вариант на пункт — снимаем остальные
+            db.clear_criteria(iid, [k for k in keys if k != arg])
         on = db.toggle_criterion(iid, arg)
         db.set_item_state(iid, item.key, visited=1, absent=0)
         await query.answer("✅ Отмечено" if on else "Снято")
     elif action == "abs":
-        db.clear_criteria(iid, [c.key for c in item.criteria])
+        db.clear_criteria(iid, [c.key for c in item.choices])
         db.set_item_state(iid, item.key, visited=1, absent=1)
-        if insp["current_item"] < len(ITEMS) - 1:
+        if insp["current_item"] < len(mod.items) - 1:
             db.set_inspection(iid, current_item=insp["current_item"] + 1)
-        await query.answer("🚫 Документа нет — 0 баллов")
+        await query.answer("🚫 Отсутствует — 0 баллов")
     elif action == "delph":
         removed = db.delete_last_photo(iid, item.key)
         if removed and removed["drive_file_id"]:
@@ -820,11 +860,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer("Последнее фото удалено" if removed else "Фото нет")
     elif action == "next":
         db.set_item_state(iid, item.key, visited=1)
-        db.set_inspection(iid, current_item=min(insp["current_item"] + 1, len(ITEMS) - 1))
+        db.set_inspection(iid, current_item=min(insp["current_item"] + 1, len(mod.items) - 1))
         await query.answer()
     elif action == "go":
         await query.answer()
-        if arg.isdigit() and 0 <= int(arg) < len(ITEMS):
+        if arg.isdigit() and 0 <= int(arg) < len(mod.items):
             db.set_inspection(iid, current_item=int(arg))
     elif action == "list":
         await query.answer()

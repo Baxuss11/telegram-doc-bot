@@ -7,7 +7,7 @@ from fpdf import FPDF
 from PIL import Image, ImageOps
 
 from . import config
-from .checklist import ITEMS, MAX_POINTS, item_score
+from .checklist import item_score, module_for
 
 MAX_IMAGE_SIDE = 1400
 JPEG_QUALITY = 70
@@ -16,6 +16,7 @@ JPEG_QUALITY = 70
 @dataclass
 class ReportData:
     inspection_id: int
+    kind: str
     company: str
     zhk: str
     inspector: str
@@ -57,6 +58,7 @@ def _prepare_image(raw: bytes) -> tuple[io.BytesIO, int, int]:
 
 
 def build(data: ReportData) -> bytes:
+    mod = module_for(data.kind)
     pdf = _PDF(format="A4")
     pdf.add_font("DejaVu", "", os.path.join(config.FONTS_DIR, "DejaVuSans.ttf"))
     pdf.add_font("DejaVu", "B", os.path.join(config.FONTS_DIR, "DejaVuSans-Bold.ttf"))
@@ -65,7 +67,7 @@ def build(data: ReportData) -> bytes:
     width = pdf.epw
 
     pdf.set_font("DejaVu", "B", 16)
-    pdf.multi_cell(width, 8, "Технический рейтинг ОСК — акт проверки", new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(width, 8, f"Рейтинг ОСК — {mod.title.lower()}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
     pdf.set_font("DejaVu", size=11)
     for label, value in (
@@ -90,9 +92,11 @@ def build(data: ReportData) -> bytes:
 
     pdf.ln(4)
     pdf.set_font("DejaVu", "B", 14)
-    percent = round(100 * data.score / MAX_POINTS) if MAX_POINTS else 0
-    pdf.multi_cell(width, 8, f"Итог: {data.score} из {MAX_POINTS} баллов ({percent}%) — {data.grade}",
-                   new_x="LMARGIN", new_y="NEXT")
+    if mod.scoring == "percent":
+        summary = f"Итог: {mod.percent(data.score)}% ({data.score} из {mod.max_points}) — {data.grade}"
+    else:
+        summary = f"Итог: {data.score} из {mod.max_points} баллов — {data.grade}"
+    pdf.multi_cell(width, 8, summary, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
 
     # Таблица баллов по пунктам
@@ -102,18 +106,18 @@ def build(data: ReportData) -> bytes:
         header = table.row()
         for title in ("№", "Пункт / критерий", "Баллы", "Фото / комментарий"):
             header.cell(title)
-        for n, item in enumerate(ITEMS, 1):
+        for n, item in enumerate(mod.items, 1):
             state = data.states.get(item.key) or {}
             files = data.files.get(item.key, [])
             lines = [item.title]
-            for c in item.criteria:
+            for c in item.choices:
                 mark = "✔" if c.key in data.checked else "✘"
                 lines.append(f"{mark} {c.title} ({c.points})")
             notes = []
             if not state.get("visited"):
                 notes.append("не проверен")
             elif state.get("absent"):
-                notes.append("документа нет")
+                notes.append("отсутствует")
             notes.append(f"фото: {len(files)}" if files else "без фото")
             if state.get("comment"):
                 notes.append(state["comment"])
@@ -124,7 +128,7 @@ def build(data: ReportData) -> bytes:
             row.cell("\n".join(notes))
 
     # Фото по пунктам
-    for n, item in enumerate(ITEMS, 1):
+    for n, item in enumerate(mod.items, 1):
         files = data.files.get(item.key, [])
         if not files:
             continue
