@@ -8,6 +8,10 @@ on:
       - '.github/scripts/**'
   workflow_dispatch:
 
+# Прогоны по очереди, чтобы не публиковать релиз одновременно
+concurrency:
+  group: layout-switcher-${{ github.ref }}
+
 jobs:
   test:
     strategy:
