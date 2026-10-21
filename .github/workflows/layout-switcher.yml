@@ -35,3 +35,42 @@ jobs:
         if: runner.os == 'macOS'
         timeout-minutes: 5
         run: python ../.github/scripts/mac_e2e.py
+
+  mac-app:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: layout_switcher
+    env:
+      PYTHON: /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install universal2 Python from python.org
+        run: |
+          curl -fsSL -o /tmp/python.pkg https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg
+          sudo installer -pkg /tmp/python.pkg -target /
+      - name: Build LayoutSwitcher.app
+        run: ./build_mac_app.sh
+      - name: Check architectures
+        run: lipo -archs dist/LayoutSwitcher.app/Contents/MacOS/LayoutSwitcher
+      - name: End-to-end test of the built app (TextEdit)
+        timeout-minutes: 5
+        env:
+          E2E_COMMAND: dist/LayoutSwitcher.app/Contents/MacOS/LayoutSwitcher
+        run: $PYTHON ../.github/scripts/mac_e2e.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LayoutSwitcher
+          path: layout_switcher/dist/LayoutSwitcher.zip
+      - name: Publish release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete layout-switcher-latest --yes --cleanup-tag || true
+          gh release create layout-switcher-latest dist/LayoutSwitcher.zip \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Переключатель раскладки для Mac" \
+            --notes "Установка: откройте Терминал и вставьте команду из layout_switcher/README.md"

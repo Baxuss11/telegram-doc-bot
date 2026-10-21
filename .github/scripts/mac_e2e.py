@@ -71,7 +71,9 @@ def main():
     time.sleep(4)
 
     log = open('switcher.log', 'w')
-    switcher = subprocess.Popen([sys.executable, '-u', 'switcher.py'], stdout=log, stderr=subprocess.STDOUT,
+    # E2E_COMMAND — проверить собранное приложение вместо switcher.py
+    command = os.environ.get('E2E_COMMAND', f'{sys.executable} -u switcher.py').split()
+    switcher = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                 env={**os.environ, 'LAYOUT_SWITCHER_DEBUG': '1'})
     time.sleep(4)
     subprocess.run(['open', '-a', 'TextEdit'])

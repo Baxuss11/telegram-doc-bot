@@ -237,11 +237,11 @@ class MacKeyboardHook:
         self._shift_down_at = None   # когда нажат Shift (если после этого не было других клавиш)
         self._last_shift_tap = 0.0
 
-        missing = [lang for lang in (RU, EN) if not self.input_sources.available(lang)]
-        for lang in missing:
+        self.missing_layouts = [lang for lang in (RU, EN) if not self.input_sources.available(lang)]
+        for lang in self.missing_layouts:
             name = 'русская' if lang == RU else 'английская (ABC или U.S.)'
             print(f'⚠️  Не включена {name} раскладка: Системные настройки → Клавиатура → Источники ввода')
-        if not missing:
+        if not self.missing_layouts:
             set_key_tables(*key_tables(self.input_sources))
 
     # --- события клавиатуры (главный поток) ---
@@ -344,10 +344,16 @@ class MacKeyboardHook:
 
     # --- запуск ---
 
-    def run(self):
-        if not check_permissions(prompt=True):
-            print(PERMISSIONS_HELP)
-            return
+    @property
+    def running(self) -> bool:
+        return self._tap is not None
+
+    def start(self, prompt: bool = True) -> bool:
+        """Подключается к клавиатуре в текущем (главном) цикле событий. False — нет прав."""
+        if self._tap is not None:
+            return True
+        if not check_permissions(prompt=prompt):
+            return False
         mask = 0
         for event_type in (Quartz.kCGEventKeyDown, Quartz.kCGEventFlagsChanged, Quartz.kCGEventLeftMouseDown,
                            Quartz.kCGEventRightMouseDown, Quartz.kCGEventOtherMouseDown):
@@ -355,8 +361,7 @@ class MacKeyboardHook:
         self._tap = Quartz.CGEventTapCreate(Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap,
                                             Quartz.kCGEventTapOptionListenOnly, mask, self._on_event, None)
         if self._tap is None:
-            print(PERMISSIONS_HELP)
-            return
+            return False
 
         loop = Quartz.CFRunLoopGetCurrent()
         source = Quartz.CFMachPortCreateRunLoopSource(None, self._tap, 0)
@@ -365,6 +370,14 @@ class MacKeyboardHook:
         timer = Quartz.CFRunLoopTimerCreate(None, Quartz.CFAbsoluteTimeGetCurrent(), 0.02, 0, 0,
                                             self._on_timer, None)
         Quartz.CFRunLoopAddTimer(loop, timer, Quartz.kCFRunLoopCommonModes)
+        return True
+
+    def run(self):
+        """Запуск из Терминала."""
+        if not self.start():
+            print(PERMISSIONS_HELP)
+            return
+        loop = Quartz.CFRunLoopGetCurrent()
         # Ctrl+C: обработчик сработает при следующем срабатывании таймера и остановит цикл
         signal.signal(signal.SIGINT, lambda *_: Quartz.CFRunLoopStop(loop))
         print('   Проверьте: напишите «ghbdtn» и пробел, например в Заметках или Telegram.')
