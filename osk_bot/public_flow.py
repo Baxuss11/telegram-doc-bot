@@ -91,7 +91,9 @@ def doc_card(insp) -> tuple[str, InlineKeyboardMarkup]:
     if idx < len(buyer.DOCS) - 1:
         nav.append(Btn("Далее ➡️", callback_data=f"p_next:{iid}"))
     rows.append(nav)
-    rows.append([Btn("🏁 Получить заключение", callback_data=f"p_fin:{iid}")])
+    # Заключение — только на последнем документе, чтобы не нажали посреди проверки.
+    if idx == len(buyer.DOCS) - 1:
+        rows.append([Btn("🏁 Получить заключение", callback_data=f"p_fin:{iid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
@@ -488,6 +490,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await send_card(context.bot, uid, db.get_inspection(iid), with_example=True)
         return
     elif action == "p_fin":
+        if idx < len(buyer.DOCS) - 1:
+            await query.answer("Сначала пройдите все документы", show_alert=True)
+            return
         await query.answer()
         await _show_result(context, uid, iid, query)
         return
