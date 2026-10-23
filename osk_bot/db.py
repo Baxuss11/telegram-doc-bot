@@ -150,6 +150,17 @@ def get_inspection(inspection_id: int) -> sqlite3.Row | None:
     return _db().execute("SELECT * FROM inspections WHERE id = ?", (inspection_id,)).fetchone()
 
 
+def finished_inspections(inspector_id: int | None = None, limit: int = 15) -> list[sqlite3.Row]:
+    """Завершённые проверки: все (inspector_id=None) или конкретного сотрудника."""
+    if inspector_id is None:
+        return _db().execute(
+            "SELECT * FROM inspections WHERE status = 'finished' ORDER BY id DESC LIMIT ?",
+            (limit,)).fetchall()
+    return _db().execute(
+        "SELECT * FROM inspections WHERE status = 'finished' AND inspector_id = ? "
+        "ORDER BY id DESC LIMIT ?", (inspector_id, limit)).fetchall()
+
+
 def active_inspection(tg_id: int) -> sqlite3.Row | None:
     return _db().execute(
         "SELECT * FROM inspections WHERE inspector_id = ? AND status = 'active' "

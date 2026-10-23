@@ -141,10 +141,12 @@ def menu_screen(user) -> tuple[str, InlineKeyboardMarkup]:
                          callback_data="cont")])
     rows.append([Btn("⚖️ Юридическая проверка", callback_data="new:legal")])
     rows.append([Btn("🔧 Техническая проверка", callback_data="new:tech")])
-    sheet_url = db.get_setting("spreadsheet_url")
-    if sheet_url:
-        rows.append([Btn("📊 Таблица рейтинга", url=sheet_url)])
+    rows.append([Btn("📋 Мои проверки", callback_data="mine")])
     if is_admin(uid):
+        rows.append([Btn("🗂 Проверки всех менеджеров", callback_data="all")])
+        sheet_url = db.get_setting("spreadsheet_url")
+        if sheet_url:
+            rows.append([Btn("📊 Таблица рейтинга", url=sheet_url)])
         rows.append([Btn("👥 Сотрудники", callback_data="staff")])
     text = (f"👷 {e(user['display_name'] or user['tg_name'])}, это бот рейтинга ОСК.\n\n"
             "Выберите раздел проверки. Бот проведёт по пунктам: фотографируете документ, "
@@ -152,6 +154,37 @@ def menu_screen(user) -> tuple[str, InlineKeyboardMarkup]:
             "⚖️ Юридическая — документы, земля, договор (итог в %).\n"
             "🔧 Техническая — журналы, лаборатория, графики (итог в баллах).")
     return text, InlineKeyboardMarkup(rows)
+
+
+def _insp_label(insp, with_name: bool = False) -> str:
+    mod = module_for(insp["kind"])
+    score = module_total(mod, db.checked_criteria(insp["id"]))
+    val = f"{mod.percent(score)}%" if mod.scoring == "percent" else f"{score}/{mod.max_points}"
+    date = (insp["finished_at"] or insp["started_at"] or "")[:10]
+    who = f"{insp['inspector_name']}: " if with_name else ""
+    return f"{who}{mod.emoji} {insp['company']}/{insp['zhk']} · {val} · {date}"
+
+
+def reports_screen(uid: int, scope: str) -> tuple[str, InlineKeyboardMarkup]:
+    """scope='mine' — свои проверки; scope='all' — все (только админ)."""
+    all_mgr = scope == "all"
+    insps = db.finished_inspections(None if all_mgr else uid)
+    title = "🗂 Проверки всех менеджеров" if all_mgr else "📋 Мои завершённые проверки"
+    lines = [f"<b>{title}</b>"]
+    rows = []
+    if not insps:
+        lines.append("\nПока нет завершённых проверок.")
+    for insp in insps:
+        label = _insp_label(insp, with_name=all_mgr)
+        url = insp["report_url"] or insp["folder_url"]
+        if url:
+            rows.append([Btn(label[:60], url=url)])
+        else:
+            lines.append(f"• {e(label)} (отчёт не сохранён в Google)")
+    if insps:
+        lines.append("\nНажмите на проверку, чтобы открыть PDF-отчёт.")
+    rows.append([Btn("🏠 Меню", callback_data="menu")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
 async def show_menu(bot: Bot, user, query=None) -> None:
@@ -756,6 +789,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if action == "staff" and is_admin(uid):
         await query.answer()
         text, markup = staff_screen()
+        await _edit(query, text, markup)
+        return
+    if action == "mine":
+        await query.answer()
+        text, markup = reports_screen(uid, "mine")
+        await _edit(query, text, markup)
+        return
+    if action == "all" and is_admin(uid):
+        await query.answer()
+        text, markup = reports_screen(uid, "all")
         await _edit(query, text, markup)
         return
     if action == "new":
