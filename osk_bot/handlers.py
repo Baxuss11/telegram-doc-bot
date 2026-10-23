@@ -176,15 +176,36 @@ def reports_screen(uid: int, scope: str) -> tuple[str, InlineKeyboardMarkup]:
         lines.append("\nПока нет завершённых проверок.")
     for insp in insps:
         label = _insp_label(insp, with_name=all_mgr)
-        url = insp["report_url"] or insp["folder_url"]
-        if url:
-            rows.append([Btn(label[:60], url=url)])
-        else:
-            lines.append(f"• {e(label)} (отчёт не сохранён в Google)")
+        rows.append([Btn(label[:60], callback_data=f"rep:{insp['id']}")])
     if insps:
-        lines.append("\nНажмите на проверку, чтобы открыть PDF-отчёт.")
+        lines.append("\nНажмите на проверку — пришлю PDF-отчёт в чат.")
     rows.append([Btn("🏠 Меню", callback_data="menu")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+async def send_report_copy(app: Application, uid: int, iid: int, status_message) -> None:
+    """Пересобирает PDF завершённой проверки и присылает его в чат."""
+    bot = app.bot
+    try:
+        insp = db.get_inspection(iid)
+        pdf, _ = await build_report(bot, insp)
+        name = f"Проверка_{iid}_{_safe_filename(insp['company'])}_{_safe_filename(insp['zhk'])}.pdf"
+        try:
+            await bot.send_document(uid, pdf, filename=name)
+        except TelegramError:
+            link = insp["report_url"] or insp["folder_url"]
+            msg = "⚠️ Отчёт слишком большой для Telegram."
+            if link:
+                msg += f"\nОткрыть на Диске: {link}"
+            await bot.send_message(uid, msg)
+    except Exception:
+        logger.exception("Не удалось переслать отчёт проверки %s", iid)
+        await bot.send_message(uid, "⚠️ Не удалось собрать отчёт. Попробуйте позже.")
+    finally:
+        try:
+            await status_message.delete()
+        except TelegramError:
+            pass
 
 
 async def show_menu(bot: Bot, user, query=None) -> None:
@@ -800,6 +821,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer()
         text, markup = reports_screen(uid, "all")
         await _edit(query, text, markup)
+        return
+    if action == "rep":
+        insp = db.get_inspection(int(rest)) if rest.isdigit() else None
+        if not insp or insp["status"] != "finished" or (
+                insp["inspector_id"] != uid and not is_admin(uid)):
+            await query.answer("Проверка не найдена", show_alert=True)
+            return
+        await query.answer("Готовлю отчёт…")
+        status = await context.bot.send_message(uid, "⏳ Собираю PDF-отчёт…")
+        context.application.create_task(send_report_copy(context.application, uid, insp["id"], status))
         return
     if action == "new":
         await query.answer()
