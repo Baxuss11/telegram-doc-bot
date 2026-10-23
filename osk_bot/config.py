@@ -20,6 +20,10 @@ ADMIN_IDS = {
 APPS_SCRIPT_URL = os.environ.get("APPS_SCRIPT_URL", "")
 APPS_SCRIPT_SECRET = os.environ.get("APPS_SCRIPT_SECRET", "")
 
+# Проверка фото документов ИИ (публичный бот). Без ключа — только чтение текста (OCR).
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+AI_MODEL = os.environ.get("AI_MODEL", "claude-opus-5-5").strip()
+
 # Папка для базы SQLite. На хостинге должна быть постоянным диском (volume).
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 DB_PATH = os.path.join(DATA_DIR, "osk_bot.sqlite3")

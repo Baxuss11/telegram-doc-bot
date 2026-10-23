@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS photos (
     mime TEXT,
     file_name TEXT,
     drive_file_id TEXT,
-    created_at TEXT
+    created_at TEXT,
+    verify TEXT,              -- публичный бот: ocr / ai / none — чем подтверждено фото
+    page INTEGER,             -- номер страницы образца, которой соответствует фото
+    uniq TEXT                 -- file_unique_id Telegram (повторы одного фото)
 );
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -91,6 +94,10 @@ def _migrate() -> None:
     ucols = {r["name"] for r in _db().execute("PRAGMA table_info(users)")}
     if "draft_kind" not in ucols:
         _db().execute("ALTER TABLE users ADD COLUMN draft_kind TEXT")
+    pcols = {r["name"] for r in _db().execute("PRAGMA table_info(photos)")}
+    for col, typ in (("verify", "TEXT"), ("page", "INTEGER"), ("uniq", "TEXT")):
+        if col not in pcols:
+            _db().execute(f"ALTER TABLE photos ADD COLUMN {col} {typ}")
 
 
 def _db() -> sqlite3.Connection:
@@ -245,13 +252,27 @@ def set_item_state(inspection_id: int, item_key: str, **fields) -> None:
 # --- Фото ---
 
 def add_photo(inspection_id: int, item_key: str, tg_file_id: str, kind: str,
-              mime: str | None, file_name: str | None) -> int:
+              mime: str | None, file_name: str | None, verify: str | None = None,
+              page: int | None = None, uniq: str | None = None) -> int:
     cur = _db().execute(
-        "INSERT INTO photos (inspection_id, item_key, tg_file_id, kind, mime, file_name, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (inspection_id, item_key, tg_file_id, kind, mime, file_name, now().isoformat()),
+        "INSERT INTO photos (inspection_id, item_key, tg_file_id, kind, mime, file_name, created_at, "
+        "verify, page, uniq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (inspection_id, item_key, tg_file_id, kind, mime, file_name, now().isoformat(),
+         verify, page, uniq),
     )
     return cur.lastrowid
+
+
+def photo_seen(inspection_id: int, uniq: str) -> bool:
+    return _db().execute("SELECT 1 FROM photos WHERE inspection_id = ? AND uniq = ?",
+                         (inspection_id, uniq)).fetchone() is not None
+
+
+def covered_pages(inspection_id: int, item_key: str) -> set[int]:
+    rows = _db().execute(
+        "SELECT page FROM photos WHERE inspection_id = ? AND item_key = ? AND page > 0",
+        (inspection_id, item_key))
+    return {r["page"] for r in rows}
 
 
 def get_photo(photo_id: int) -> sqlite3.Row | None:

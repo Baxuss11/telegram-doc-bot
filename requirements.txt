@@ -2,3 +2,4 @@ python-telegram-bot>=22.0,<23
 Pillow>=10.4,<14
 fpdf2>=2.8,<3
 tzdata
+anthropic>=2.2,<3

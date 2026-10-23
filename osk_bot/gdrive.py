@@ -5,6 +5,7 @@ Apps Script работает от имени владельца папки, по
 """
 import base64
 import logging
+import re
 
 import httpx
 
@@ -15,6 +16,19 @@ logger = logging.getLogger(__name__)
 
 class DriveError(Exception):
     pass
+
+
+# Слова, которые не отличают одну компанию/ЖК от другой. Та же логика — в Code.gs
+# (normName_): «ЖК Елизавета», «елизавета» и «Елизавета» попадают в одну папку.
+_NOISE = re.compile(r"\b(жилой комплекс|жк|ж к|мжк|строительная компания|компания|ск|осоо|оао|"
+                    r"ооо|зао|ао|ип|llc|ltd)\b")
+
+
+def norm_name(name: str) -> str:
+    s = name.lower().replace("ё", "е")
+    s = re.sub(r"[^0-9a-zа-яөүң]+", " ", s)
+    s = _NOISE.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def enabled() -> bool:
@@ -51,6 +65,11 @@ async def upload(path: list[str], name: str, mime: str, content: bytes) -> dict:
 async def folder(path: list[str]) -> dict:
     """Находит или создаёт папку. Возвращает {folderId, folderUrl}."""
     return await _call("folder", path=path)
+
+
+async def children(path: list[str]) -> list[str]:
+    """Названия папок внутри ROOT/path (ничего не создаёт). Пусто, если папки нет."""
+    return (await _call("children", path=path)).get("names", [])
 
 
 async def trash(file_id: str) -> None:

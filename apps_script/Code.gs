@@ -33,6 +33,8 @@ function doPost(e) {
         return json_({ ok: true, root: DriveApp.getFolderById(ROOT_FOLDER_ID).getName() });
       case 'folder':
         return json_(folderInfo_(folderByPath_(req.path)));
+      case 'children':
+        return json_(children_(req.path));
       case 'upload':
         return json_(upload_(req));
       case 'trash':
@@ -50,14 +52,47 @@ function doPost(e) {
   }
 }
 
+// «ЖК Елизавета», «елизавета» и «Елизавета» — одна папка. Та же логика — norm_name в gdrive.py.
+function normName_(name) {
+  return String(name).toLowerCase().replace(/ё/g, 'е')
+    .replace(/[^0-9a-zа-яөүң]+/g, ' ')
+    .replace(/(^| )(жилой комплекс|жк|ж к|мжк|строительная компания|компания|ск|осоо|оао|ооо|зао|ао|ип|llc|ltd)(?= |$)/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+// Подпапка с таким же названием «по смыслу» или null.
+function findChild_(folder, name) {
+  const exact = folder.getFoldersByName(name);
+  if (exact.hasNext()) return exact.next();
+  const key = normName_(name);
+  if (!key) return null;
+  const all = folder.getFolders();
+  while (all.hasNext()) {
+    const f = all.next();
+    if (normName_(f.getName()) === key) return f;
+  }
+  return null;
+}
+
 function folderByPath_(path) {
   let folder = DriveApp.getFolderById(ROOT_FOLDER_ID);
   (path || []).forEach(function (raw) {
     const name = String(raw).trim() || 'Без названия';
-    const found = folder.getFoldersByName(name);
-    folder = found.hasNext() ? found.next() : folder.createFolder(name);
+    folder = findChild_(folder, name) || folder.createFolder(name);
   });
   return folder;
+}
+
+function children_(path) {
+  let folder = DriveApp.getFolderById(ROOT_FOLDER_ID);
+  for (const raw of path || []) {
+    folder = findChild_(folder, String(raw).trim());
+    if (!folder) return { ok: true, names: [] };
+  }
+  const names = [];
+  const it = folder.getFolders();
+  while (it.hasNext()) names.push(it.next().getName());
+  return { ok: true, names: names };
 }
 
 function folderInfo_(folder) {

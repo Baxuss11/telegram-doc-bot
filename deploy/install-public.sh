@@ -10,7 +10,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/Baxuss11/telegram-doc-bot/claude/nice-keller-a2pw6y/deploy/install-public.sh | sudo bash -s -- 'ТОКЕН_OTZYV' 'URL_APPS_SCRIPT' 'ПАРОЛЬ_APPS_SCRIPT' 'https://wa.me/996XXXXXXXXX'
 #
 # Аргументы: 1 — токен @OtzyvSK_bot (обязательно); 2 — URL Apps Script;
-# 3 — пароль Apps Script; 4 — ссылка «Связаться» (WhatsApp/Telegram, необязательно).
+# 3 — пароль Apps Script; 4 — ссылка «Связаться» (WhatsApp/Telegram, необязательно);
+# 5 — ключ Anthropic API для проверки фото ИИ (необязательно, без него — только OCR).
+# Не переданные 4 и 5 берутся из прежних настроек — повторный запуск их не стирает.
 set -euo pipefail
 
 BRANCH="${BRANCH:-claude/nice-keller-a2pw6y}"
@@ -34,6 +36,11 @@ main() {
     APPS_SCRIPT_URL="${2:-}"
     APPS_SCRIPT_SECRET="${3:-}"
     SUPPORT_CONTACT="${4:-}"
+    ANTHROPIC_API_KEY="${5:-${ANTHROPIC_API_KEY:-}}"
+    if [ -f "$ENV_FILE" ]; then
+        [ -n "$SUPPORT_CONTACT" ] || SUPPORT_CONTACT=$(grep -E '^SUPPORT_CONTACT=' "$ENV_FILE" | cut -d= -f2- || true)
+        [ -n "$ANTHROPIC_API_KEY" ] || ANTHROPIC_API_KEY=$(grep -E '^ANTHROPIC_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
+    fi
     if [ -z "$BOT_TOKEN" ]; then
         echo "⚠️ Укажите токен @OtzyvSK_bot первым аргументом." >&2
         exit 1
@@ -57,6 +64,10 @@ main() {
         exit 1
     fi
     echo "    токен от @$BOT_NAME"
+
+    echo "==> Распознавание текста на фото (Tesseract)"
+    apt-get install -y -qq tesseract-ocr tesseract-ocr-rus >/dev/null \
+        || { apt-get update -qq && apt-get install -y -qq tesseract-ocr tesseract-ocr-rus >/dev/null; }
 
     echo "==> Код бота ($BRANCH)"
     git -C "$APP_DIR" fetch -q origin "$BRANCH"
@@ -92,6 +103,7 @@ ADMIN_IDS=$ADMIN_IDS
 APPS_SCRIPT_URL=$APPS_SCRIPT_URL
 APPS_SCRIPT_SECRET=$APPS_SCRIPT_SECRET
 SUPPORT_CONTACT=$SUPPORT_CONTACT
+ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 DATA_DIR=$DATA_DIR
 EOF
     chmod 600 "$ENV_FILE"
@@ -145,6 +157,11 @@ EOF
     if systemctl is-active -q "$SERVICE"; then
         echo
         echo "✅ Публичный бот @$BOT_NAME запущен в режиме покупателя."
+        if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "   Проверка фото: OCR + ИИ."
+        else
+            echo "   Проверка фото: только OCR (ключ ИИ не задан — 5-й аргумент)."
+        fi
         echo "   Логи:       sudo journalctl -u $SERVICE -f"
         echo "   Перезапуск: sudo systemctl restart $SERVICE"
     else
