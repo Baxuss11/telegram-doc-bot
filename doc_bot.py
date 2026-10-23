@@ -12,6 +12,7 @@ logging.basicConfig(
 )
 # httpx пишет в лог каждый запрос к Telegram вместе с токеном в адресе
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("doc_bot")
 
 
 def main() -> None:
@@ -21,10 +22,22 @@ def main() -> None:
     # PUBLIC_MODE=1 — публичный бот для покупателей (@OtzyvSK_bot);
     # иначе — внутренний бот для сотрудников (@OSK_Tech_bot).
     mod = public_flow if config.PUBLIC_MODE else handlers
-    application = Application.builder().token(config.BOT_TOKEN).post_init(mod.post_init).build()
+    mode = ("Публичный бот для покупателей" if config.PUBLIC_MODE
+            else "Бот рейтинга ОСК для сотрудников")
+
+    async def post_init(app: Application) -> None:
+        # Какой бот и в каком режиме запущен — первое, что смотреть в логе,
+        # если бот отвечает «не тем» сценарием (перепутан токен или режим).
+        me = await app.bot.get_me()
+        logger.info("%s запущен: @%s (id %s)", mode, me.username, me.id)
+        if not config.PUBLIC_MODE and not config.ADMIN_IDS:
+            logger.warning(
+                "Режим сотрудников без ADMIN_IDS: каждому будет ответ «Администратор "
+                "бота ещё не настроен». Если это публичный бот — в настройках нет PUBLIC_MODE=1.")
+        await mod.post_init(app)
+
+    application = Application.builder().token(config.BOT_TOKEN).post_init(post_init).build()
     mod.register(application)
-    print(("Публичный бот для покупателей" if config.PUBLIC_MODE
-           else "Бот рейтинга ОСК для сотрудников") + " запущен...")
     application.run_polling()
 
 

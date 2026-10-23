@@ -4,6 +4,8 @@
 #
 # Сначала должен быть установлен основной бот (deploy/install.sh) — публичный
 # использует тот же код в /opt/osk-bot, но свой токен, свою базу и свою службу.
+# Код скрипт обновляет сам: на старом коде (без PUBLIC_MODE) публичный бот
+# запускался бы в режиме сотрудников и всем отвечал «Администратор бота ещё не настроен».
 #
 #   curl -fsSL https://raw.githubusercontent.com/Baxuss11/telegram-doc-bot/claude/nice-keller-a2pw6y/deploy/install-public.sh | sudo bash -s -- 'ТОКЕН_OTZYV' 'URL_APPS_SCRIPT' 'ПАРОЛЬ_APPS_SCRIPT' 'https://wa.me/996XXXXXXXXX'
 #
@@ -11,6 +13,7 @@
 # 3 — пароль Apps Script; 4 — ссылка «Связаться» (WhatsApp/Telegram, необязательно).
 set -euo pipefail
 
+BRANCH="${BRANCH:-claude/nice-keller-a2pw6y}"
 APP_DIR=/opt/osk-bot
 DATA_DIR=/var/lib/osk-bot-public
 ENV_FILE=/etc/osk-bot-public.env
@@ -33,6 +36,34 @@ main() {
     SUPPORT_CONTACT="${4:-}"
     if [ -z "$BOT_TOKEN" ]; then
         echo "⚠️ Укажите токен @OtzyvSK_bot первым аргументом." >&2
+        exit 1
+    fi
+
+    echo "==> Проверка токена"
+    if [ -f /etc/osk-bot.env ] \
+       && [ "$BOT_TOKEN" = "$(grep -E '^BOT_TOKEN=' /etc/osk-bot.env | cut -d= -f2- || true)" ]; then
+        echo "⚠️ Это токен основного бота (@OSK_Tech_bot) из /etc/osk-bot.env." >&2
+        echo "   Нужен токен именно @OtzyvSK_bot (из @BotFather)." >&2
+        exit 1
+    fi
+    ME=$(curl -fsS "https://api.telegram.org/bot$BOT_TOKEN/getMe" || true)
+    BOT_NAME=$(printf '%s' "$ME" | grep -o '"username":"[^"]*"' | cut -d'"' -f4 || true)
+    if [ -z "$BOT_NAME" ]; then
+        echo "⚠️ Telegram не принял токен (неверный или отозван). Возьмите новый у @BotFather." >&2
+        exit 1
+    fi
+    if [ "$BOT_NAME" = "OSK_Tech_bot" ]; then
+        echo "⚠️ Токен принадлежит @OSK_Tech_bot, а нужен токен @OtzyvSK_bot." >&2
+        exit 1
+    fi
+    echo "    токен от @$BOT_NAME"
+
+    echo "==> Код бота ($BRANCH)"
+    git -C "$APP_DIR" fetch -q origin "$BRANCH"
+    git -C "$APP_DIR" checkout -q -B "$BRANCH" "origin/$BRANCH"
+    "$APP_DIR/venv/bin/pip" install -q -r "$APP_DIR/requirements.txt"
+    if [ ! -f "$APP_DIR/osk_bot/public_flow.py" ]; then
+        echo "⚠️ В ветке $BRANCH нет публичного режима (osk_bot/public_flow.py)." >&2
         exit 1
     fi
 
@@ -82,12 +113,32 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable -q "$SERVICE"
+    STARTED=$(date '+%Y-%m-%d %H:%M:%S')
     systemctl restart "$SERVICE"
-    sleep 5
+    # Код общий — основной бот тоже переводим на обновлённый код.
+    if systemctl is-active -q osk-bot; then
+        systemctl restart osk-bot && echo "==> Основной бот тоже перезапущен"
+    fi
+    sleep 8
+
+    LOG=$(journalctl -u "$SERVICE" --since "$STARTED" -o cat --no-pager || true)
+    if printf '%s' "$LOG" | grep -q "Conflict"; then
+        echo
+        echo "⚠️ С этим токеном уже работает другая копия бота — Telegram отдаёт сообщения то ей, то этой."
+        echo "   Остановите лишнюю (ручной запуск в терминале/screen, другой сервер или хостинг)."
+        echo "   Копии на этом сервере:"
+        pgrep -af doc_bot.py || true
+    fi
+    if ! printf '%s' "$LOG" | grep -q "Публичный бот для покупателей запущен"; then
+        echo
+        echo "⚠️ Служба не подтвердила публичный режим. Последние строки лога:"
+        journalctl -u "$SERVICE" -n 30 --no-pager
+        exit 1
+    fi
 
     if systemctl is-active -q "$SERVICE"; then
         echo
-        echo "✅ Публичный бот @OtzyvSK_bot запущен."
+        echo "✅ Публичный бот @$BOT_NAME запущен в режиме покупателя."
         echo "   Логи:       sudo journalctl -u $SERVICE -f"
         echo "   Перезапуск: sudo systemctl restart $SERVICE"
     else
