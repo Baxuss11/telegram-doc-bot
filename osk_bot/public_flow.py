@@ -42,6 +42,7 @@ NAMES_TTL = 600
 _uploading: set[int] = set()                                   # фото, которые сейчас грузятся на Диск
 AI_DAILY_LIMIT = 60                                            # проверок ИИ на человека в сутки
 _ai_used: dict[int, tuple[str, int]] = {}                      # uid → (дата, сколько)
+_ai_alert_at = 0.0                                             # когда последний раз писали админам о сбое ИИ
 
 
 def e(text) -> str:
@@ -539,6 +540,20 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         dict(file_id=file_id, uniq=uniq, kind=kind, mime=mime or "image/jpeg", name=name)))
 
 
+async def _alert_ai_down(bot: Bot, reason: str) -> None:
+    """Раз в час сообщает администраторам, что ИИ не работает (фото пока принимаются без проверки)."""
+    global _ai_alert_at
+    if time.monotonic() - _ai_alert_at < 3600 and _ai_alert_at:
+        return
+    _ai_alert_at = time.monotonic()
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, f"⚠️ Проверка фото ИИ не работает — фото принимаются "
+                                             f"без проверки.\nПричина: {e(reason)[:500]}")
+        except TelegramError:
+            pass
+
+
 def _ai_count(uid: int) -> int:
     day, n = _ai_used.get(uid, ("", 0))
     return n if day == db.now().date().isoformat() else 0
@@ -582,6 +597,8 @@ async def _process_file(app: Application, uid: int, iid: int, doc: buyer.BuyerDo
                                    allow_ai=_ai_count(uid) < AI_DAILY_LIMIT)
             if v.method == "ai":
                 _ai_spent(uid)
+            elif v.method == "none" and v.reason:
+                await _alert_ai_down(app.bot, v.reason)
             if v.ok and v.page and v.page in db.covered_pages(iid, doc.key):
                 v = verify.Verdict(False, reason=f"Эта страница уже есть (как на образце №{v.page}). "
                                                  "Нужна другая страница — сверьтесь с образцом.")

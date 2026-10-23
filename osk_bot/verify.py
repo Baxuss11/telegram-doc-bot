@@ -21,11 +21,16 @@ from . import buyer, config
 
 logger = logging.getLogger(__name__)
 
-MAX_SIDE = 1600       # больше не нужно ни OCR, ни ИИ, а запрос легче
+MAX_SIDE = 1600       # для ИИ больше не нужно, а запрос легче
+OCR_SIDE = 2800       # для OCR фото увеличиваем: мелкий шрифт документа иначе не читается
 OCR_TIMEOUT = 60
 OCR_HINT_CHARS = 1500
 
 _client: anthropic.AsyncAnthropic | None = None
+
+
+class AIUnavailable(Exception):
+    """ИИ не ответил по технической причине (ключ, баланс, сеть) — не вина фото."""
 
 
 @dataclass
@@ -64,20 +69,45 @@ def prepare_jpeg(content: bytes) -> bytes:
     return out.getvalue()
 
 
-async def ocr_text(jpeg: bytes) -> str | None:
-    """Текст с фото или None, если OCR недоступен или упал."""
-    if not ocr_enabled():
-        return None
+def prepare_ocr(content: bytes) -> bytes:
+    """Серое, контрастное, увеличенное до OCR_SIDE изображение — так Tesseract читает мелкий текст."""
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(content))).convert("L")
+    scale = OCR_SIDE / max(img.size)
+    if scale > 1:
+        img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+    out = io.BytesIO()
+    ImageOps.autocontrast(img).save(out, "PNG")
+    return out.getvalue()
+
+
+async def _tesseract(png: bytes, psm: str) -> str | None:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "tesseract", "stdin", "stdout", "-l", "rus+eng", "--psm", "3",
+            "tesseract", "stdin", "stdout", "-l", "rus+eng", "--psm", psm,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(proc.communicate(jpeg), OCR_TIMEOUT)
+        out, _ = await asyncio.wait_for(proc.communicate(png), OCR_TIMEOUT)
     except (OSError, asyncio.TimeoutError) as ex:
         logger.warning("OCR не сработал: %s", ex)
         return None
     return out.decode("utf-8", "ignore")
+
+
+async def ocr_text(content: bytes, doc_key: str = "") -> str | None:
+    """Текст с фото или None, если OCR недоступен или упал.
+
+    Сначала обычная разметка страницы; если слов документа не нашлось — второй
+    проход как сплошной блок текста (так лучше читаются бланки и таблицы).
+    """
+    if not ocr_enabled():
+        return None
+    png = await asyncio.to_thread(prepare_ocr, content)
+    text = await _tesseract(png, "3")
+    if text is not None and doc_key and not keyword_hits(doc_key, text):
+        second = await _tesseract(png, "6")
+        if second:
+            text += "\n" + second
+    return text
 
 
 SYSTEM = (
@@ -134,19 +164,27 @@ async def ai_check(doc: buyer.BuyerDoc, content: bytes, is_pdf: bool,
         + (f"page — номер страницы образца (1–{len(refs)}), которой соответствует фото, "
            "или 0, если ни одной." if refs else "page — всегда 0.")
     )})
-    response = await _client.beta.messages.create(
-        model=config.AI_MODEL,
-        max_tokens=2048,
-        system=SYSTEM,
-        messages=[{"role": "user", "content": blocks}],
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-    )
-    if response.stop_reason == "refusal":
-        raise anthropic.AnthropicError("модель отказалась проверять фото")
+    try:
+        response = await _client.beta.messages.create(
+            model=config.AI_MODEL,
+            max_tokens=16000,
+            system=SYSTEM,
+            messages=[{"role": "user", "content": blocks}],
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+        )
+    except anthropic.APIStatusError as ex:
+        raise AIUnavailable(f"{ex.status_code}: {ex.message}") from ex
+    except anthropic.APIConnectionError as ex:
+        raise AIUnavailable(f"нет связи с API: {ex}") from ex
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise AIUnavailable(f"ответ не получен (stop_reason={response.stop_reason})")
     text = next((b.text for b in response.content if b.type == "text"), "")
-    data = json.loads(text)
+    try:
+        data = json.loads(text)
+    except ValueError as ex:
+        raise AIUnavailable(f"непонятный ответ: {text[:200]!r}") from ex
     page = data["page"] if refs and 1 <= data["page"] <= len(refs) else 0
     return Verdict(bool(data["matches"]), page, "ai", data.get("reason", ""))
 
@@ -158,8 +196,8 @@ async def check(doc: buyer.BuyerDoc, content: bytes, mime: str, refs: list[bytes
     is_pdf = mime == "application/pdf"
     ocr = None
     if not is_pdf:
+        ocr = await ocr_text(content, doc.key)
         content = await asyncio.to_thread(prepare_jpeg, content)
-        ocr = await ocr_text(content)
     hits = keyword_hits(doc.key, ocr) if ocr else []
     # Страницы различает только ИИ: при нескольких образцах OCR лишь подсказка.
     if hits and (len(refs) < 2 or not use_ai):
@@ -167,13 +205,13 @@ async def check(doc: buyer.BuyerDoc, content: bytes, mime: str, refs: list[bytes
     if use_ai:
         try:
             return await ai_check(doc, content, is_pdf, refs, ocr)
-        except (anthropic.AnthropicError, ValueError, KeyError) as ex:
-            logger.warning("ИИ не проверил фото (%s): %s", doc.key, ex)
+        except (AIUnavailable, anthropic.AnthropicError, KeyError) as ex:
+            # Сбой ИИ — не вина покупателя: засчитываем с пометкой «без проверки»
+            # (видно в таблице), а причину сообщаем администратору.
+            logger.error("ИИ не проверил фото (%s): %s", doc.key, ex)
             if hits:
                 return Verdict(True, 0, "ocr")
-            if ocr is None:
-                return Verdict(True, 0, "none")
-            return Verdict(False, reason="Не получилось проверить фото — пришлите его ещё раз.")
+            return Verdict(True, 0, "none", reason=f"ИИ недоступен: {ex}")
     if ocr is None:
         return Verdict(True, 0, "none")  # проверить нечем — принимаем, в таблице будет видно
     return Verdict(False, reason=f"Не удалось узнать на фото «{doc.title}». Снимите документ "
