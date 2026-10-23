@@ -187,6 +187,10 @@ def example_doc_screen(idx: int) -> tuple[str, InlineKeyboardMarkup]:
 async def cmd_examples(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = _touch(update)["tg_id"]
     if not is_admin(uid):
+        logger.info("/examples от %s — не в ADMIN_IDS %s", uid, sorted(config.ADMIN_IDS))
+        await update.message.reply_text(
+            f"Команда только для администратора.\nВаш Telegram ID: <code>{uid}</code>",
+            parse_mode=ParseMode.HTML)
         return
     db.set_user(uid, mode="idle")
     text, markup = examples_screen()
@@ -552,6 +556,8 @@ async def post_init(app: Application) -> None:
         BotCommand("help", "📘 Как это работает"),
     ]
     await app.bot.set_my_commands(commands)
+    logger.info("Публичный бот: администраторы образцов (/examples): %s",
+                ", ".join(map(str, sorted(config.ADMIN_IDS))) or "не заданы (ADMIN_IDS пуст)")
     for admin_id in config.ADMIN_IDS:
         try:
             await app.bot.set_my_commands(commands + [BotCommand("examples", "🖼 Образцы фото")],
