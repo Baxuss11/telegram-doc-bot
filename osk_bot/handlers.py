@@ -176,9 +176,10 @@ def reports_screen(uid: int, scope: str) -> tuple[str, InlineKeyboardMarkup]:
         lines.append("\nПока нет завершённых проверок.")
     for insp in insps:
         label = _insp_label(insp, with_name=all_mgr)
-        rows.append([Btn(label[:60], callback_data=f"rep:{insp['id']}")])
+        rows.append([Btn(label[:56], callback_data=f"rep:{insp['id']}"),
+                     Btn("🗑", callback_data=f"del:{scope}:{insp['id']}")])
     if insps:
-        lines.append("\nНажмите на проверку — пришлю PDF-отчёт в чат.")
+        lines.append("\nНажмите на проверку — пришлю PDF-отчёт в чат. 🗑 — удалить (например, пробную).")
     rows.append([Btn("🏠 Меню", callback_data="menu")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -831,6 +832,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer("Готовлю отчёт…")
         status = await context.bot.send_message(uid, "⏳ Собираю PDF-отчёт…")
         context.application.create_task(send_report_copy(context.application, uid, insp["id"], status))
+        return
+    if action in ("del", "delok"):
+        scope, _, iid_s = rest.partition(":")
+        insp = db.get_inspection(int(iid_s)) if iid_s.isdigit() else None
+        if not insp or (insp["inspector_id"] != uid and not is_admin(uid)):
+            await query.answer("Проверка не найдена", show_alert=True)
+            return
+        if action == "del":
+            await query.answer()
+            await _edit(query, f"🗑 Удалить проверку?\n<b>{module_for(insp['kind']).emoji} "
+                               f"{e(insp['company'])} / {e(insp['zhk'])}</b>\n\n"
+                               "Она исчезнет из списков и из подсказок. Отменить нельзя.",
+                        _kb([Btn("🗑 Да, удалить", callback_data=f"delok:{scope}:{insp['id']}")],
+                            [Btn("⬅️ Назад", callback_data="all" if scope == "all" else "mine")]))
+            return
+        drive_ids = db.delete_inspection(insp["id"])
+        for fid in drive_ids:
+            context.application.create_task(_trash_quietly(fid))
+        await query.answer("Удалено")
+        text, markup = reports_screen(uid, scope if scope == "all" and is_admin(uid) else "mine")
+        await _edit(query, text, markup)
         return
     if action == "new":
         await query.answer()

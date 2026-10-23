@@ -173,18 +173,29 @@ def set_inspection(inspection_id: int, **fields) -> None:
 
 
 def recent_companies(limit: int = 8) -> list[sqlite3.Row]:
-    """Последние компании — чтобы не набирать название заново (и без опечаток)."""
+    """Подсказки компаний — только из завершённых проверок (без проб и незаконченных)."""
     return _db().execute(
-        "SELECT MAX(id) AS id, company FROM inspections WHERE status != 'cancelled' "
+        "SELECT MAX(id) AS id, company FROM inspections WHERE status = 'finished' "
         "GROUP BY company ORDER BY MAX(id) DESC LIMIT ?", (limit,)
     ).fetchall()
 
 
 def recent_zhk(company: str, limit: int = 8) -> list[sqlite3.Row]:
     return _db().execute(
-        "SELECT MAX(id) AS id, zhk FROM inspections WHERE status != 'cancelled' AND company = ? "
+        "SELECT MAX(id) AS id, zhk FROM inspections WHERE status = 'finished' AND company = ? "
         "GROUP BY zhk ORDER BY MAX(id) DESC LIMIT ?", (company, limit)
     ).fetchall()
+
+
+def delete_inspection(inspection_id: int) -> list[str]:
+    """Полностью удаляет проверку. Возвращает drive_file_id фото для чистки на Диске."""
+    rows = _db().execute(
+        "SELECT drive_file_id FROM photos WHERE inspection_id = ? AND drive_file_id IS NOT NULL",
+        (inspection_id,)).fetchall()
+    for table in ("answers", "item_states", "photos"):
+        _db().execute(f"DELETE FROM {table} WHERE inspection_id = ?", (inspection_id,))
+    _db().execute("DELETE FROM inspections WHERE id = ?", (inspection_id,))
+    return [r["drive_file_id"] for r in rows]
 
 
 # --- Отметки и состояние пунктов ---
