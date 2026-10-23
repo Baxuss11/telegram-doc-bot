@@ -567,9 +567,11 @@ async def sync_to_google(bot: Bot, insp, pdf: bytes, contents: dict[int, bytes])
         res = await gdrive.upload(_base_path(insp), pdf_name, "application/pdf", pdf)
         db.set_inspection(iid, report_url=res["fileUrl"])
         sh, srows, dh, drows = sheet_rows(db.get_inspection(iid))
-        suffix = "Юр" if insp["kind"] == "legal" else "Тех"
-        res = await gdrive.append_rows(f"Рейтинг — {suffix}", sh, srows)
-        await gdrive.append_rows(f"Детали — {suffix}", dh, drows)
+        # Техническая часть пишется в «Рейтинг»/«Детали», юридическая — в «… — Юр».
+        rating_sheet, detail_sheet = ("Рейтинг — Юр", "Детали — Юр") if insp["kind"] == "legal" \
+            else ("Рейтинг", "Детали")
+        res = await gdrive.append_rows(rating_sheet, sh, srows)
+        await gdrive.append_rows(detail_sheet, dh, drows)
     except gdrive.DriveError as ex:
         logger.warning("Проверка %s не сохранена в Google: %s", iid, ex)
         return str(ex)
@@ -726,6 +728,30 @@ async def cmd_staff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     text, markup = staff_screen()
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Админ: /sync <id> — досохранить завершённую проверку в Google (таблица + фото + PDF)."""
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        return
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Использование: /sync <номер проверки>, например /sync 4")
+        return
+    iid = int(args[0])
+    insp = db.get_inspection(iid)
+    if not insp or insp["status"] != "finished":
+        await update.message.reply_text(f"Проверка №{iid} не найдена или не завершена.")
+        return
+    if iid in _busy:
+        await update.message.reply_text("Эта проверка уже отправляется, подождите…")
+        return
+    mod = module_for(insp["kind"])
+    status = await update.message.reply_text(
+        f"⏳ Записываю проверку №{iid} ({mod.emoji} {e(insp['company'])} / {e(insp['zhk'])}) в таблицу…",
+        parse_mode=ParseMode.HTML)
+    context.application.create_task(resync(context.application, uid, iid, status))
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1079,6 +1105,7 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("help", cmd_help, filters=private))
     app.add_handler(CommandHandler("myid", cmd_myid, filters=private))
     app.add_handler(CommandHandler("staff", cmd_staff, filters=private))
+    app.add_handler(CommandHandler("sync", cmd_sync, filters=private))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(
         private & (filters.PHOTO | filters.Document.IMAGE | filters.Document.PDF), on_file))
