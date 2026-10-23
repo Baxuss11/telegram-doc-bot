@@ -16,6 +16,10 @@ ADMIN_IDS = {
     int(x) for x in os.environ.get("ADMIN_IDS", "").replace(" ", "").split(",") if x
 }
 
+# Токен @OSK_Tech_bot для публичного бота: отчёты о проверках агентов и сбои
+# приходят администраторам туда, а не в чат публичного бота.
+NOTIFY_BOT_TOKEN = os.environ.get("NOTIFY_BOT_TOKEN", "").strip()
+
 # Веб-приложение Google Apps Script (см. apps_script/Code.gs)
 APPS_SCRIPT_URL = os.environ.get("APPS_SCRIPT_URL", "")
 APPS_SCRIPT_SECRET = os.environ.get("APPS_SCRIPT_SECRET", "")

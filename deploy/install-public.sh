@@ -84,9 +84,12 @@ main() {
         APPS_SCRIPT_SECRET=$(grep -E '^APPS_SCRIPT_SECRET=' /etc/osk-bot.env | cut -d= -f2- || true)
     fi
     # Админы те же, что у основного бота: им доступна команда /examples (образцы фото).
+    # Отчёты о проверках агентов приходят админам через основной бот (@OSK_Tech_bot).
     ADMIN_IDS=""
+    NOTIFY_BOT_TOKEN=""
     if [ -f /etc/osk-bot.env ]; then
         ADMIN_IDS=$(grep -E '^ADMIN_IDS=' /etc/osk-bot.env | cut -d= -f2- || true)
+        NOTIFY_BOT_TOKEN=$(grep -E '^BOT_TOKEN=' /etc/osk-bot.env | cut -d= -f2- || true)
     fi
 
     echo "==> База публичного бота"
@@ -100,6 +103,7 @@ main() {
 BOT_TOKEN=$BOT_TOKEN
 PUBLIC_MODE=1
 ADMIN_IDS=$ADMIN_IDS
+NOTIFY_BOT_TOKEN=$NOTIFY_BOT_TOKEN
 APPS_SCRIPT_URL=$APPS_SCRIPT_URL
 APPS_SCRIPT_SECRET=$APPS_SCRIPT_SECRET
 SUPPORT_CONTACT=$SUPPORT_CONTACT

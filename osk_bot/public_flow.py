@@ -540,18 +540,31 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         dict(file_id=file_id, uniq=uniq, kind=kind, mime=mime or "image/jpeg", name=name)))
 
 
+async def _to_admins(text: str) -> None:
+    """Сообщение администраторам через @OSK_Tech_bot (NOTIFY_BOT_TOKEN), не в публичный бот."""
+    if not config.NOTIFY_BOT_TOKEN:
+        logger.warning("NOTIFY_BOT_TOKEN не задан — админам не отправлено: %s", text[:200])
+        return
+    try:
+        async with Bot(config.NOTIFY_BOT_TOKEN) as staff_bot:
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await staff_bot.send_message(admin_id, text, parse_mode=ParseMode.HTML,
+                                                 disable_web_page_preview=True)
+                except TelegramError as ex:
+                    logger.info("Админ %s не уведомлён: %s", admin_id, ex)
+    except TelegramError as ex:
+        logger.warning("Бот уведомлений недоступен: %s", ex)
+
+
 async def _alert_ai_down(bot: Bot, reason: str) -> None:
     """Раз в час сообщает администраторам, что ИИ не работает (фото пока принимаются без проверки)."""
     global _ai_alert_at
     if time.monotonic() - _ai_alert_at < 3600 and _ai_alert_at:
         return
     _ai_alert_at = time.monotonic()
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, f"⚠️ Проверка фото ИИ не работает — фото принимаются "
-                                             f"без проверки.\nПричина: {e(reason)[:500]}")
-        except TelegramError:
-            pass
+    await _to_admins("⚠️ <b>ЮР заключение ОСК:</b> проверка фото ИИ не работает — фото принимаются "
+                     f"без проверки.\nПричина: {e(reason)[:500]}")
 
 
 def _ai_count(uid: int) -> int:
@@ -787,21 +800,19 @@ async def _notify_admins(bot: Bot, insp, error: str | None) -> None:
     who = e(insp["inspector_name"] or (agent["tg_name"] if agent else ""))
     if agent and agent["username"]:
         who += f" (@{e(agent['username'])})"
-    lines = [f"🆕 <b>Проверка агента №{insp['id']}</b>",
+    lines = [f"🆕 <b>ЮР заключение ОСК — проверка агента №{insp['id']}</b>",
              f"👤 {who}, ID <code>{insp['inspector_id']}</code>"
              + (f", 📞 {e(insp['contact_phone'])}" if insp["contact_phone"] else ""),
              f"🏗 {e(insp['company'])} · {e(insp['zhk'])}",
              f"📊 {len(provided)} из {len(buyer.REQUIRED)} ({buyer.percent(provided)}%)"]
     if insp["folder_url"]:
         lines.append(f"📂 <a href=\"{e(insp['folder_url'])}\">Папка с фото</a>")
+    sheet_url = db.get_setting("spreadsheet_url")
+    if sheet_url and not error:
+        lines.append(f"📊 <a href=\"{e(sheet_url)}\">Таблица рейтинга</a> — лист «Покупатели»")
     if error:
         lines.append(f"⚠️ В таблицу не сохранилось: {e(error)}")
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, "\n".join(lines), parse_mode=ParseMode.HTML,
-                                   disable_web_page_preview=True)
-        except TelegramError as ex:
-            logger.info("Админ %s не уведомлён: %s", admin_id, ex)
+    await _to_admins("\n".join(lines))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

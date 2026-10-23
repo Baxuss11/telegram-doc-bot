@@ -63,6 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/Baxuss11/telegram-doc-bot/claude/ni
 | `SUPPORT_CONTACT` | osk-bot-public.env | ссылка «Связаться» (WhatsApp), необязательно |
 | `ANTHROPIC_API_KEY` | osk-bot-public.env | ключ ИИ для проверки фото (5-й аргумент `install-public.sh`); без него — только OCR |
 | `AI_MODEL` | osk-bot-public.env | модель ИИ, по умолчанию `claude-opus-5-5` |
+| `NOTIFY_BOT_TOKEN` | osk-bot-public.env | токен @OSK_Tech_bot: отчёты о проверках агентов и сбои ИИ приходят админам туда (`install-public.sh` берёт из `/etc/osk-bot.env`) |
 | `DATA_DIR` | оба | папка базы SQLite |
 
 ⚠️ **Токены разных ботов легко перепутать.** @OSK_Tech_bot имеет id `5273935935`
@@ -159,7 +160,7 @@ curl -fsSL https://raw.githubusercontent.com/Baxuss11/telegram-doc-bot/claude/ni
   созвон, юр. разбор, заключение, сопровождение до госрегистрации; бот просит имя и телефон.
 - Данные → лист **«Покупатели»** (в конце колонки: Telegram ID, имя, @username, сколько фото
   и чем проверены) + фото в `Тех РЕЙТИНГ / Компания / ЖК / «Покупатель ДАТА (ID …)» /
-  Документ`. Админам приходит уведомление о каждой завершённой проверке.
+  Документ`. Админам приходит отчёт о каждой завершённой проверке — в @OSK_Tech_bot, не в публичный бот.
 
 ### 8 документов и что снимать (из `osk_bot/buyer.py`)
 
