@@ -4,7 +4,7 @@ import sys
 
 from telegram.ext import Application
 
-from osk_bot import config, db, handlers
+from osk_bot import config, db, handlers, public_flow
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -18,9 +18,13 @@ def main() -> None:
     if not config.BOT_TOKEN:
         sys.exit("Не задана переменная окружения BOT_TOKEN")
     db.init()
-    application = Application.builder().token(config.BOT_TOKEN).post_init(handlers.post_init).build()
-    handlers.register(application)
-    print("Бот технического рейтинга ОСК запущен...")
+    # PUBLIC_MODE=1 — публичный бот для покупателей (@OtzyvSK_bot);
+    # иначе — внутренний бот для сотрудников (@OSK_Tech_bot).
+    mod = public_flow if config.PUBLIC_MODE else handlers
+    application = Application.builder().token(config.BOT_TOKEN).post_init(mod.post_init).build()
+    mod.register(application)
+    print(("Публичный бот для покупателей" if config.PUBLIC_MODE
+           else "Бот рейтинга ОСК для сотрудников") + " запущен...")
     application.run_polling()
 
 

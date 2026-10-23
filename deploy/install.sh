@@ -106,6 +106,11 @@ EOF
     systemctl daemon-reload
     systemctl enable -q "$SERVICE"
     systemctl restart "$SERVICE"
+    # Если установлен публичный бот (@OtzyvSK_bot) — обновим и его.
+    if systemctl list-unit-files osk-bot-public.service >/dev/null 2>&1 \
+       && systemctl cat osk-bot-public.service >/dev/null 2>&1; then
+        systemctl restart osk-bot-public && echo "==> Публичный бот тоже перезапущен"
+    fi
     sleep 5
 
     if systemctl is-active -q "$SERVICE"; then

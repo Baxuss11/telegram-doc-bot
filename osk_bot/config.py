@@ -4,6 +4,13 @@ from zoneinfo import ZoneInfo
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
+# Режим публичного бота для покупателей (@OtzyvSK_bot): без доступа по списку,
+# пошаговая проверка документов и заключение. Включается PUBLIC_MODE=1.
+PUBLIC_MODE = os.environ.get("PUBLIC_MODE", "").strip() in ("1", "true", "yes")
+
+# Контакт для кнопки «Связаться» в публичном боте (например, https://wa.me/996...).
+SUPPORT_CONTACT = os.environ.get("SUPPORT_CONTACT", "").strip()
+
 # Telegram ID администраторов через запятую: 123456789,987654321
 ADMIN_IDS = {
     int(x) for x in os.environ.get("ADMIN_IDS", "").replace(" ", "").split(",") if x

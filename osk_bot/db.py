@@ -86,6 +86,8 @@ def _migrate() -> None:
     cols = {r["name"] for r in _db().execute("PRAGMA table_info(inspections)")}
     if "kind" not in cols:
         _db().execute("ALTER TABLE inspections ADD COLUMN kind TEXT NOT NULL DEFAULT 'tech'")
+    if "contact_phone" not in cols:
+        _db().execute("ALTER TABLE inspections ADD COLUMN contact_phone TEXT")
     ucols = {r["name"] for r in _db().execute("PRAGMA table_info(users)")}
     if "draft_kind" not in ucols:
         _db().execute("ALTER TABLE users ADD COLUMN draft_kind TEXT")
