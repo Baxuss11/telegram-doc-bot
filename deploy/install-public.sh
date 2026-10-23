@@ -72,6 +72,11 @@ main() {
         APPS_SCRIPT_URL=$(grep -E '^APPS_SCRIPT_URL=' /etc/osk-bot.env | cut -d= -f2- || true)
         APPS_SCRIPT_SECRET=$(grep -E '^APPS_SCRIPT_SECRET=' /etc/osk-bot.env | cut -d= -f2- || true)
     fi
+    # Админы те же, что у основного бота: им доступна команда /examples (образцы фото).
+    ADMIN_IDS=""
+    if [ -f /etc/osk-bot.env ]; then
+        ADMIN_IDS=$(grep -E '^ADMIN_IDS=' /etc/osk-bot.env | cut -d= -f2- || true)
+    fi
 
     echo "==> База публичного бота"
     mkdir -p "$DATA_DIR"
@@ -83,6 +88,7 @@ main() {
     cat > "$ENV_FILE" <<EOF
 BOT_TOKEN=$BOT_TOKEN
 PUBLIC_MODE=1
+ADMIN_IDS=$ADMIN_IDS
 APPS_SCRIPT_URL=$APPS_SCRIPT_URL
 APPS_SCRIPT_SECRET=$APPS_SCRIPT_SECRET
 SUPPORT_CONTACT=$SUPPORT_CONTACT

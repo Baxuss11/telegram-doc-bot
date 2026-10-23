@@ -7,12 +7,14 @@
 """
 import asyncio
 import html
+import json
 import logging
 import os
 import re
 
 from telegram import (
-    Bot, BotCommand, InlineKeyboardButton as Btn, InlineKeyboardMarkup, Update,
+    Bot, BotCommand, BotCommandScopeChat, InlineKeyboardButton as Btn, InlineKeyboardMarkup,
+    InputMediaPhoto, Update,
 )
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 MAX_DOWNLOAD = 20 * 1024 * 1024
 REFRESH_DELAY = 1.5
 EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "buyer_examples")
+MAX_EXAMPLES = 10  # столько фото Telegram отправляет одним альбомом
 
 _refresh: dict[int, asyncio.Task] = {}
 
@@ -112,17 +115,116 @@ async def send_card(bot: Bot, uid: int, insp=None, with_example: bool = False) -
         except TelegramError:
             pass
     if with_example:
-        doc = buyer.DOCS[insp["current_item"]]
-        path = os.path.join(EXAMPLES_DIR, f"{doc.example}.jpg") if doc.example else None
-        if path and os.path.exists(path):
-            try:
-                with open(path, "rb") as f:
-                    await bot.send_photo(uid, f, caption=f"Пример: {doc.title}")
-            except TelegramError as ex:
-                logger.warning("Пример %s не отправлен: %s", doc.example, ex)
+        await send_example(bot, uid, buyer.DOCS[insp["current_item"]])
     text, markup = doc_card(insp)
     msg = await bot.send_message(uid, text, parse_mode=ParseMode.HTML, reply_markup=markup)
     db.set_user(uid, card_message_id=msg.message_id)
+
+
+# ----------------------------- образцы фото -----------------------------
+# Образцы загружает администратор прямо в бота (/examples) — хранятся как
+# file_id Telegram в настройках базы, без файлов в репозитории. Если образцов
+# нет — берётся файл из buyer_examples/ (если положен), иначе только текст.
+
+def is_admin(uid: int) -> bool:
+    return uid in config.ADMIN_IDS
+
+
+def examples(doc_key: str) -> list[str]:
+    try:
+        return json.loads(db.get_setting(f"example:{doc_key}") or "[]")
+    except ValueError:
+        return []
+
+
+def set_examples(doc_key: str, file_ids: list[str]) -> None:
+    db.set_setting(f"example:{doc_key}", json.dumps(file_ids[:MAX_EXAMPLES]))
+
+
+async def send_example(bot: Bot, uid: int, doc: buyer.BuyerDoc) -> None:
+    caption = f"Пример: {doc.title}"
+    try:
+        ids = examples(doc.key)
+        if len(ids) == 1:
+            await bot.send_photo(uid, ids[0], caption=caption)
+        elif ids:
+            await bot.send_media_group(uid, [InputMediaPhoto(fid, caption=caption if i == 0 else None)
+                                             for i, fid in enumerate(ids)])
+        elif doc.example:
+            path = os.path.join(EXAMPLES_DIR, f"{doc.example}.jpg")
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    await bot.send_photo(uid, f, caption=caption)
+    except TelegramError as ex:
+        logger.warning("Пример %s не отправлен: %s", doc.key, ex)
+
+
+def examples_screen() -> tuple[str, InlineKeyboardMarkup]:
+    lines = ["🖼 <b>Образцы фото для покупателей</b>",
+             "Выберите документ и пришлите фото-образцы (до 10). Покупатель увидит их "
+             "перед инструкцией. Замажьте имена, номера и подписи.", ""]
+    rows = []
+    for i, doc in enumerate(buyer.DOCS):
+        n = len(examples(doc.key))
+        lines.append(f"{i + 1}. {e(doc.title)} — " + (f"{n} фото" if n else "нет"))
+        rows.append([Btn(f"{i + 1}. {doc.title}" + (f" ({n})" if n else ""), callback_data=f"x_doc:{i}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+def example_doc_screen(idx: int) -> tuple[str, InlineKeyboardMarkup]:
+    doc = buyer.DOCS[idx]
+    n = len(examples(doc.key))
+    text = (f"🖼 <b>{idx + 1}. {e(doc.title)}</b>\n\nОбразцов: {n} из {MAX_EXAMPLES}.\n"
+            "Пришлите фото сюда (обычным фото, не файлом) — каждое добавится к образцам.")
+    rows = []
+    if n:
+        rows.append([Btn("👁 Показать", callback_data=f"x_show:{idx}"),
+                     Btn("🗑 Очистить", callback_data=f"x_clr:{idx}")])
+    rows.append([Btn("✅ Готово", callback_data="x_list")])
+    return text, InlineKeyboardMarkup(rows)
+
+
+async def cmd_examples(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = _touch(update)["tg_id"]
+    if not is_admin(uid):
+        return
+    db.set_user(uid, mode="idle")
+    text, markup = examples_screen()
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def on_example_file(update: Update, idx: int) -> None:
+    msg = update.message
+    if not msg.photo:
+        await msg.reply_text("Пришлите образец обычным фото (со сжатием), не файлом.")
+        return
+    doc = buyer.DOCS[idx]
+    ids = examples(doc.key)
+    if len(ids) >= MAX_EXAMPLES:
+        await msg.reply_text(f"Уже {MAX_EXAMPLES} образцов — это максимум. Очистите и загрузите заново.")
+        return
+    set_examples(doc.key, ids + [msg.photo[-1].file_id])
+    text, markup = example_doc_screen(idx)
+    await msg.reply_text("✅ Добавлено.\n\n" + text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def on_example_callback(query, context, uid: int, action: str, rest: str) -> None:
+    await query.answer()
+    idx = int(rest) if rest.isdigit() and int(rest) < len(buyer.DOCS) else None
+    if action == "x_list" or idx is None:
+        db.set_user(uid, mode="idle")
+        text, markup = examples_screen()
+    elif action == "x_show":
+        await send_example(context.bot, uid, buyer.DOCS[idx])
+        text, markup = example_doc_screen(idx)
+        await context.bot.send_message(uid, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
+    else:
+        if action == "x_clr":
+            set_examples(buyer.DOCS[idx].key, [])
+        db.set_user(uid, mode=f"pub_ex:{idx}")
+        text, markup = example_doc_screen(idx)
+    await _edit(query, text, markup)
 
 
 def schedule_refresh(app: Application, uid: int) -> None:
@@ -272,6 +374,9 @@ def _split_contact(raw: str) -> tuple[str, str]:
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = _touch(update)
     uid = user["tg_id"]
+    if user["mode"].startswith("pub_ex:") and is_admin(uid):
+        await on_example_file(update, int(user["mode"].partition(":")[2]))
+        return
     insp = db.active_inspection(uid)
     if user["mode"] != "pub_docs" or not insp or insp["kind"] != "buyer":
         await update.message.reply_text("Чтобы начать проверку, нажмите /start")
@@ -302,6 +407,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     uid = user["tg_id"]
     action, _, rest = (query.data or "").partition(":")
 
+    if action.startswith("x_"):
+        if is_admin(uid):
+            await on_example_callback(query, context, uid, action, rest)
+        else:
+            await query.answer()
+        return
     if action == "p_new":
         await query.answer()
         active = db.active_inspection(uid)
@@ -436,10 +547,17 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def post_init(app: Application) -> None:
-    await app.bot.set_my_commands([
+    commands = [
         BotCommand("start", "🏠 Начать проверку документов"),
         BotCommand("help", "📘 Как это работает"),
-    ])
+    ]
+    await app.bot.set_my_commands(commands)
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await app.bot.set_my_commands(commands + [BotCommand("examples", "🖼 Образцы фото")],
+                                          scope=BotCommandScopeChat(admin_id))
+        except TelegramError as ex:  # админ ещё не писал боту
+            logger.info("Команды для администратора %s не установлены: %s", admin_id, ex)
     if gdrive.enabled():
         try:
             info = await gdrive.ping()
@@ -452,6 +570,7 @@ def register(app: Application) -> None:
     private = filters.ChatType.PRIVATE
     app.add_handler(CommandHandler("start", cmd_start, filters=private))
     app.add_handler(CommandHandler("help", cmd_help, filters=private))
+    app.add_handler(CommandHandler("examples", cmd_examples, filters=private))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(
         private & (filters.PHOTO | filters.Document.IMAGE | filters.Document.PDF), on_file))
