@@ -164,13 +164,13 @@ test('«Отправлено»: исчезают обе кнопки, повто
   assert.deepEqual(sent, ['A81']);
   const edit = api.of('editMessageText')[0];
   assert.deepEqual(edit.reply_markup, { inline_keyboard: [] });
-  assert.ok(edit.text.endsWith('📤 Отправлено: Айбек · 25.10, 21:50'));
+  assert.ok(edit.text.endsWith('✅ Отправлено в WhatsApp: Айбек · 25.10, 21:50'));
   assert.deepEqual(edit.entities, ticketMessage().entities);
   assert.equal(store.get('A81').sentBy, 'Айбек');
 
   await press(handler, OWNER, ticketMessage(), 'osk:s:A81');
   assert.deepEqual(sent, ['A81']);
-  assert.match(api.of('answerCallbackQuery').pop().text, /уже отмечен/);
+  assert.match(api.of('answerCallbackQuery').pop().text, /уже отправлен \(Айбек\)/);
 });
 
 test('ошибка отметки «Отправлено»: кнопки остаются', async () => {
@@ -321,4 +321,19 @@ test('два процесса с одним файлом состояния не
   assert.deepEqual(fresh.get('A81'), { payment: { chat_id: GROUP, message_id: 501 }, confirmedBy: 'Айбек' });
   assert.equal(fresh.get('A82').payment.message_id, 502);
   assert.equal(fresh.getOffset(), 42);
+});
+
+test('кнопка называется «Отправлено», а не SENT', () => {
+  const kb = ticketKeyboard('A81', 'https://wa.me/1').inline_keyboard;
+  assert.equal(kb[1][0].text, '✅ Отправлено A81');
+  assert.ok(!JSON.stringify(kb).includes('SENT'));
+});
+
+test('повторные нажатия не пишут сообщения в группу — только всплывающая подсказка', async () => {
+  const { api, handler, sent } = setup();
+  await press(handler, MANAGER, ticketMessage(), 'osk:s:A81');
+  for (let i = 0; i < 4; i++) await press(handler, OWNER, ticketMessage(), 'osk:s:A81');
+  assert.deepEqual(sent, ['A81']);
+  assert.equal(api.of('sendMessage').length, 0);
+  assert.equal(api.of('editMessageText').length, 1);
 });

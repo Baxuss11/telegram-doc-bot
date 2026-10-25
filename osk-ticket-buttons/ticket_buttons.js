@@ -7,8 +7,9 @@
  *   новая оплата   → [✅ Подтвердить A81]
  *     нажали и чек прошёл (или подтвердили в другом месте) → кнопка исчезает,
  *     в сообщении строка «✅ Подтвердил: …»
- *   билет готов    → [📲 Отправить билет в WhatsApp] [📤 Отправлено A81]
- *     нажали «Отправлено» → обе кнопки исчезают, строка «📤 Отправлено: …»
+ *   билет готов    → [📲 Отправить билет в WhatsApp] [✅ Отправлено A81]
+ *     нажали «Отправлено» → обе кнопки исчезают, сообщение больше не кликабельно,
+ *     строка «✅ Отправлено в WhatsApp: …»
  *
  * Нажимать может любой участник разрешённой группы. Повторное или двойное
  * нажатие ничего не повторяет. Зависимостей нет, нужен Node 18+.
@@ -36,7 +37,7 @@ function ticketKeyboard(row, whatsappUrl) {
   assertRow(row);
   const keyboard = [];
   if (whatsappUrl) keyboard.push([{ text: '📲 Отправить билет в WhatsApp', url: whatsappUrl }]);
-  keyboard.push([{ text: `📤 Отправлено ${row}`, callback_data: `osk:s:${row}` }]);
+  keyboard.push([{ text: `✅ Отправлено ${row}`, callback_data: `osk:s:${row}` }]);
   return { inline_keyboard: keyboard };
 }
 
@@ -244,7 +245,7 @@ function createButtonHandler({
     const record = store.get(row);
     if (record.sentAt) {
       await removeButtons(cq.message.chat.id, cq.message.message_id);
-      return answer(cq, `${row} уже отмечен отправленным (${record.sentBy}).`);
+      return answer(cq, `${row} уже отправлен (${record.sentBy}).`);
     }
     const result = await runStep(markSent, row, cq.from);
     if (!result.ok) {
@@ -257,8 +258,8 @@ function createButtonHandler({
       sentBy: by,
       ticket: { chat_id: cq.message.chat.id, message_id: cq.message.message_id }
     });
-    await answer(cq, `📤 ${row}: отмечено «Отправлено»`);
-    await finishMessage(cq.message, `📤 Отправлено: ${by} · ${stamp()}`);
+    await answer(cq, `✅ ${row}: отмечено «Отправлено»`);
+    await finishMessage(cq.message, `✅ Отправлено в WhatsApp: ${by} · ${stamp()}`);
   }
 
   async function handleUpdate(update) {
