@@ -68,12 +68,24 @@ class Config:
 
         self.bitrix_webhook = _require("BITRIX_WEBHOOK_URL").rstrip("/") + "/"
 
+        # Сущность CRM: deal (Сделки) или lead (Лиды). В ОСК работают через Сделки.
+        self.entity = (os.environ.get("BITRIX_ENTITY") or "deal").strip().lower()
+        if self.entity not in ("deal", "lead"):
+            raise ConfigError("BITRIX_ENTITY должно быть deal или lead")
+
+        # По умолчанию «квалифицирован» = выигранная сделка (STAGE_SEMANTIC_ID = S),
+        # что не зависит от конкретной воронки. Для лидов — стадия CONVERTED.
+        if self.entity == "deal":
+            default_field, default_values = "STAGE_SEMANTIC_ID", "S"
+        else:
+            default_field, default_values = "STATUS_ID", "CONVERTED"
+
         self.qualified_field = (
-            os.environ.get("BITRIX_QUALIFIED_FIELD") or "STATUS_ID"
+            os.environ.get("BITRIX_QUALIFIED_FIELD") or default_field
         ).strip()
         self.qualified_values = {
             v.upper()
-            for v in _split(os.environ.get("BITRIX_QUALIFIED_VALUES") or "CONVERTED")
+            for v in _split(os.environ.get("BITRIX_QUALIFIED_VALUES") or default_values)
         }
         self.lead_key_fields = _split(
             os.environ.get("BITRIX_AD_KEY_FIELDS") or "UTM_CONTENT"

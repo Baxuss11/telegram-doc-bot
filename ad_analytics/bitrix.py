@@ -1,7 +1,7 @@
-"""Клиент Bitrix24 REST (входящий вебхук): чтение лидов.
+"""Клиент Bitrix24 REST (входящий вебхук): чтение заявок (сделок или лидов).
 
 Вебхук должен иметь только право crm. Читаем нужные поля, включая UTM и поле
-качества лида, и проходим всю постраничную выдачу (Bitrix отдаёт по 50).
+качества, и проходим всю постраничную выдачу (Bitrix отдаёт по 50).
 """
 
 import requests
@@ -11,13 +11,13 @@ class BitrixError(Exception):
     """Ошибка REST Bitrix24 (неверный вебхук, нет прав, неизвестное поле)."""
 
 
-def fetch_leads(webhook, since, select_fields, timeout=60):
-    """Возвращает список лидов, созданных начиная с даты since ('YYYY-MM-DD').
+def fetch_items(webhook, entity, since, select_fields, timeout=60):
+    """Возвращает список записей CRM (entity='deal' или 'lead') от даты since.
 
-    select_fields — список полей, которые нужно вернуть (ID, DATE_CREATE,
-    поле качества, поля-ключи связывания и т.д.).
+    since — дата 'YYYY-MM-DD'. select_fields — поля, которые нужно вернуть
+    (ID, DATE_CREATE, поле качества, поля-ключи связывания и т.д.).
     """
-    method = webhook + "crm.lead.list"
+    method = webhook + f"crm.{entity}.list"
     # Убираем дубли, сохраняя порядок.
     select = list(dict.fromkeys(select_fields))
 

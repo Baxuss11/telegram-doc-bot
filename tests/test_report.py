@@ -68,5 +68,28 @@ class BuildReportTest(unittest.TestCase):
         self.assertEqual(t["qualified"], 2)
 
 
+class DealSemanticTest(unittest.TestCase):
+    """Сделки: «квалифицирован» = выигранная сделка (STAGE_SEMANTIC_ID = S)."""
+
+    def test_won_deals_counted_as_qualified(self):
+        insights = [{"ad_name": "video_a", "spend": "300", "clicks": "20"}]
+        deals = [
+            {"UTM_CONTENT": "video_a", "STAGE_SEMANTIC_ID": "S"},  # выиграна
+            {"UTM_CONTENT": "video_a", "STAGE_SEMANTIC_ID": "P"},  # в работе
+            {"UTM_CONTENT": "video_a", "STAGE_SEMANTIC_ID": "F"},  # проиграна
+        ]
+        report = build_report(
+            insights, deals,
+            key_fields=["UTM_CONTENT"],
+            qualified_field="STAGE_SEMANTIC_ID",
+            qualified_values={"S"},
+        )
+        row = next(r for r in report["rows"] if r["key"] == "video_a")
+        self.assertEqual(row["leads"], 3)
+        self.assertEqual(row["qualified"], 1)
+        self.assertEqual(row["cost_per_lead"], 100.0)       # 300 / 3
+        self.assertEqual(row["cost_per_qualified"], 300.0)  # 300 / 1
+
+
 if __name__ == "__main__":
     unittest.main()

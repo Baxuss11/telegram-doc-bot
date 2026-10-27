@@ -12,7 +12,7 @@ import datetime
 import json
 import sys
 
-from .bitrix import BitrixError, fetch_leads
+from .bitrix import BitrixError, fetch_items
 from .config import Config, ConfigError
 from .meta import MetaError, fetch_ad_insights
 from .report import build_report, format_text
@@ -58,7 +58,7 @@ def main(argv=None) -> int:
 
     select = ["ID", "TITLE", "DATE_CREATE", cfg.qualified_field] + cfg.lead_key_fields
     try:
-        leads = fetch_leads(cfg.bitrix_webhook, since, select)
+        leads = fetch_items(cfg.bitrix_webhook, cfg.entity, since, select)
     except BitrixError as exc:
         print(f"Ошибка Bitrix24: {exc}", file=sys.stderr)
         return 4
