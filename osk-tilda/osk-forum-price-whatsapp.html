@@ -1,0 +1,161 @@
+<!-- OSK Forum: автоматическая цена билета по датам + кнопки «Купить» сразу в WhatsApp. -->
+<!-- Вставляется ВМЕСТО содержимого существующего HTML-блока (T123) на странице osk.kg/ticket. -->
+<script>
+(function () {
+  var PHONE = '996502510770';
+  var FULL_PRICE = 6000;
+  // Каждая цена действует до 23:59 указанного дня по времени Бишкека (UTC+6).
+  var TIERS = [
+    { until: '2026-10-19', price: 3000, label: '19 октября', short: '19.10' },
+    { until: '2026-11-02', price: 4000, label: '2 ноября', short: '2.11' },
+    { until: '2026-11-16', price: 5000, label: '16 ноября', short: '16.11' },
+    { until: '2026-11-21', price: 6000, label: '21 ноября', short: '21.11' }
+  ];
+
+  function fmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+
+  function currentTier() {
+    var now = Date.now();
+    for (var i = 0; i < TIERS.length; i++) {
+      if (now <= Date.parse(TIERS[i].until + 'T23:59:59+06:00')) return i;
+    }
+    return TIERS.length - 1;
+  }
+
+  var i = currentTier();
+  var t = TIERS[i];
+  var next = TIERS[i + 1];
+  var price = fmt(t.price) + ' сом';
+  var discount = Math.round((1 - t.price / FULL_PRICE) * 100);
+  var hasDiscount = discount > 0;
+
+  // Короткие тексты, чтобы не переносились и не налезали на соседние строки
+  var untilText = 'До ' + t.label + ', 23:59' +
+    (next ? '. Потом — ' + fmt(next.price) + ' сом' : '');
+  var ladder = 'Цена растёт: ' + TIERS.map(function (x) {
+    return 'до ' + x.short + ' — ' + fmt(x.price);
+  }).join(', ') + ' сом.';
+
+  // Текст, который ПОКУПАТЕЛЬ отправляет нам. Инструкцию с QR отвечает менеджер с номера PHONE.
+  var message =
+    'Здравствуйте! Хочу купить билет на OSK Forum 2026 (21 ноября, Бишкек).\n' +
+    'Цена сейчас: ' + price + ' (до ' + t.label + ').\n' +
+    'Количество билетов: 1';
+
+  var waHref = 'https://wa.me/' + PHONE + '?text=' + encodeURIComponent(message);
+
+  // Кнопка покупки: попап формы, любая ссылка WhatsApp или «Купить…» с якорем.
+  function isBuyLink(a) {
+    if (!a || a.tagName !== 'A') return false;
+    var href = a.getAttribute('href') || '';
+    if (href === '#popup:payment') return true;
+    if (/wa\.me|api\.whatsapp\.com/.test(href)) return true;
+    return href.charAt(0) === '#' && /купить|сатып ал/i.test(a.textContent || '');
+  }
+
+  function track() {
+    try { if (window.gtag) window.gtag('event', 'ticket_intent', { method: 'whatsapp', value: t.price, currency: 'KGS' }); } catch (e) {}
+    try { if (window.fbq) window.fbq('track', 'InitiateCheckout', { value: t.price, currency: 'KGS' }); } catch (e) {}
+    try { if (window.dataLayer) window.dataLayer.push({ event: 'ticket_whatsapp_click', value: t.price }); } catch (e) {}
+  }
+
+  // Ловим нажатие раньше Тильды, чтобы попап с формой не открывался.
+  window.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!isBuyLink(a)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    track();
+    setTimeout(function () { window.location.href = waHref; }, 150);
+  }, true);
+
+  function setHTML(sel, html) {
+    var els = document.querySelectorAll(sel);
+    for (var k = 0; k < els.length; k++) els[k].innerHTML = html;
+  }
+
+  function apply() {
+    // Все кнопки покупки ведут прямо в WhatsApp (видно и при долгом нажатии / копировании ссылки)
+    var links = document.querySelectorAll('a');
+    for (var k = 0; k < links.length; k++) {
+      if (!isBuyLink(links[k])) continue;
+      links[k].href = waHref;
+      links[k].removeAttribute('target');
+      links[k].rel = 'noopener';
+    }
+    // Если попап формы всё же откроется — после отправки тоже наш номер и новый текст
+    var forms = document.querySelectorAll('form[data-success-url*="wa.me"]');
+    for (var f = 0; f < forms.length; f++) forms[f].setAttribute('data-success-url', waHref);
+
+    // Первый экран: карточка «Билет»
+    var spans = document.querySelectorAll('#rec4634692503 span');
+    for (var s = 0; s < spans.length; s++) {
+      var tx = spans[s].textContent;
+      if (/^Скидка \d+%$/.test(tx)) spans[s].textContent = hasDiscount ? 'Скидка ' + discount + '%' : '';
+      if (/^Сейчас к оплате:/.test(tx)) spans[s].textContent = 'Сейчас к оплате: ' + price;
+      if (/^\s*сейчас\s*$/.test(tx) && !hasDiscount) spans[s].textContent = '';
+    }
+
+    // Блок «Билет участника»
+    setHTML('[field="tn_text_1791545610000000002"]', hasDiscount
+      ? 'Скидка<br><span style="font-size:64px;font-weight:900;line-height:.9">' + discount + '%</span><br>сейчас'
+      : 'Цена<br><span style="font-size:64px;font-weight:900;line-height:.9">' + fmt(t.price / 1000) + 'K</span><br>сом');
+    setHTML('[field="tn_text_1791545610000000004"]', (hasDiscount ? 'По скидке сейчас: ' : 'Сейчас: ') + price);
+    setHTML('[field="tn_text_1791545610000000005"]', untilText);
+    setHTML('[field="tn_text_1791545610000000006"]', ladder);
+    setHTML('[field="tn_text_1791568200000000001"]',
+      '1. Нажмите кнопку ниже — откроется WhatsApp OSK с готовым сообщением, отправьте его.<br>' +
+      '2. В ответ пришлём QR для оплаты и инструкцию.<br>' +
+      '3. Оплатите ' + price + ' и отправьте чек по ссылке из сообщения.<br>' +
+      '4. После проверки билет с QR-кодом придёт в WhatsApp.');
+
+    // FAQ «Есть ли VIP-билеты?»
+    setHTML('[field="tn_text_1791545612000000011"]',
+      '<b>Есть ли VIP-билеты?</b><br><span style="color:#626a76;font-weight:500">' +
+      'Нет. Формат один для всех гостей. Сейчас билет стоит ' + price + ' (до ' + t.label + '), ' +
+      'полная цена — ' + fmt(FULL_PRICE) + ' сом.</span>');
+  }
+
+  // Переключатель RU/KG в шапке: «RU» на синем кружке, «KG» серым рядом
+  function fixLangSwitch() {
+    var atom = document.querySelector('[data-elem-id="1791545600000000010"] .tn-atom');
+    if (!atom || atom.getAttribute('data-osk-fixed')) return;
+    atom.setAttribute('data-osk-fixed', '1');
+    atom.style.whiteSpace = 'nowrap';
+    atom.innerHTML =
+      '<span style="display:inline-block;width:50px;margin-left:-13px;text-align:center;color:#fff">RU</span>' +
+      '<span style="display:inline-block;width:54px;text-align:center;color:#8a93a3">KG</span>';
+  }
+
+  // Экраны 960–1199px (ноутбуки, iPad горизонтально): у блоков нет своей раскладки,
+  // поэтому масштабируем десктопную. Первый экран не трогаем — у него своя раскладка.
+  function fitMidScreens() {
+    if (!document.getElementById('osk-mid-css')) {
+      var st = document.createElement('style');
+      st.id = 'osk-mid-css';
+      st.textContent = '.osk-mid .t396__elem{margin-left:var(--osk-shift,0px)}';
+      document.head.appendChild(st);
+    }
+    var w = window.innerWidth;
+    var on = w >= 960 && w < 1200;
+    var z = w / 1240;
+    // Тильда сдвигает сетку на (w - 960) / 2 — компенсируем, чтобы контент стоял по центру
+    var shift = ((w - 1160 * z) / 2 - z * ((w - 960) / 2 + 20)) / z;
+    var blocks = document.querySelectorAll('.t396');
+    for (var k = 0; k < blocks.length; k++) {
+      if (blocks[k].closest('#rec4634692503')) continue;
+      blocks[k].style.zoom = on ? z.toFixed(4) : '';
+      blocks[k].classList.toggle('osk-mid', on);
+      blocks[k].style.setProperty('--osk-shift', on ? shift.toFixed(1) + 'px' : '0px');
+    }
+  }
+
+  function run() { apply(); fixLangSwitch(); fitMidScreens(); }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+  else run();
+  // Zero Block может перерисоваться после загрузки — применяем ещё раз
+  window.addEventListener('load', function () { setTimeout(run, 300); });
+  window.addEventListener('resize', fitMidScreens);
+})();
+</script>
