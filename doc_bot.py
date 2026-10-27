@@ -1,5 +1,14 @@
 import os
+import asyncio
 import logging
+
+# Секреты читаем из файла .env (в репозиторий он не попадает), а не из кода.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application,
@@ -41,6 +50,7 @@ async def post_init(application: Application):
         BotCommand("start", "🔄 Начать новый сбор"),
         BotCommand("done", "✅ Создать итоговый PDF"),
         BotCommand("cancel", "❌ Отменить текущий сбор"),
+        BotCommand("ads", "📊 Отчёт по рекламе (только админ)"),
     ]
     await application.bot.set_my_commands(commands)
 
@@ -194,9 +204,90 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Логика отмены
     return ConversationHandler.END
 
+
+def _admin_ids() -> set:
+    """Telegram-ID, которым разрешён /ads. Задаётся в .env: ADMIN_IDS=123,456"""
+    raw = os.getenv("ADMIN_IDS", "")
+    ids = set()
+    for part in raw.replace(" ", "").split(","):
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
+async def ads_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отчёт «расход vs заявки по креативам». Доступен только админам."""
+    user_id = update.effective_user.id if update.effective_user else None
+    admins = _admin_ids()
+    if not admins:
+        await update.message.reply_text(
+            "⚠️ Команда не настроена: в .env не задан ADMIN_IDS."
+        )
+        return
+    if user_id not in admins:
+        await update.message.reply_text("⛔ Эта команда доступна только администратору.")
+        return
+
+    # Период: /ads 7 — за 7 дней, по умолчанию 30.
+    days = 30
+    if context.args and context.args[0].isdigit():
+        days = int(context.args[0])
+
+    await update.message.reply_text(f"⏳ Собираю отчёт за последние {days} дн…")
+
+    # Импорт внутри функции, чтобы ошибка конфигурации не ломала запуск бота.
+    from ad_analytics.service import generate_report
+    from ad_analytics.report import format_text
+    from ad_analytics.config import ConfigError
+    from ad_analytics.meta import MetaError
+    from ad_analytics.bitrix import BitrixError
+
+    try:
+        # Сетевые вызовы синхронные — уводим в отдельный поток, чтобы не блокировать бота.
+        report, since, until = await asyncio.to_thread(generate_report, None, None, days)
+        text = format_text(report, since, until)
+    except ConfigError as exc:
+        await update.message.reply_text(f"Ошибка настройки: {exc}")
+        return
+    except MetaError as exc:
+        await update.message.reply_text(f"Ошибка Meta: {exc}")
+        return
+    except BitrixError as exc:
+        await update.message.reply_text(f"Ошибка Bitrix24: {exc}")
+        return
+    except Exception as exc:  # на всякий случай, чтобы бот не падал
+        logger.exception("Ошибка /ads")
+        await update.message.reply_text(f"Непредвиденная ошибка: {exc}")
+        return
+
+    # Telegram ограничивает сообщение ~4096 символами — отправляем частями.
+    for chunk in _split_message(text):
+        await update.message.reply_text(f"<pre>{chunk}</pre>", parse_mode="HTML")
+
+
+def _split_message(text: str, limit: int = 3500):
+    """Режет длинный отчёт по строкам в куски не длиннее limit символов."""
+    chunks, current = [], ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = ""
+        current += line + "\n"
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def main() -> None:
-    TOKEN = "5273935935:AAHwrmEiQcN1wtfft57OjSMTJGCZSzKJASQ"
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not TOKEN:
+        raise SystemExit(
+            "Не задан TELEGRAM_BOT_TOKEN. Впишите токен бота в файл .env "
+            "(TELEGRAM_BOT_TOKEN=...) рядом с doc_bot.py."
+        )
     application = Application.builder().token(TOKEN).post_init(post_init).build()
+
+    application.add_handler(CommandHandler("ads", ads_command))
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
