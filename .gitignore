@@ -1,0 +1,10 @@
+# Секреты: токен Meta и вебхук Bitrix24 храним только в окружении, не в репозитории.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
