@@ -1076,6 +1076,61 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
 
+def _split_report(text: str, limit: int = 3500) -> list:
+    """Режет длинный отчёт по строкам на куски не длиннее лимита Telegram."""
+    chunks, cur = [], ""
+    for line in text.split("\n"):
+        if len(cur) + len(line) + 1 > limit:
+            chunks.append(cur)
+            cur = ""
+        cur += line + "\n"
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+async def cmd_ads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отчёт «расход Meta vs заявки Bitrix24 по креативам». Только для админов.
+
+    Период: /ads — 30 дней, /ads 7 — за 7 дней.
+    Секреты (META_ACCESS_TOKEN, META_AD_ACCOUNT_IDS, BITRIX_WEBHOOK_URL)
+    задаются в /etc/osk-bot.env, как и остальные настройки бота.
+    """
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("⛔ Команда доступна только администратору.")
+        return
+
+    days = int(context.args[0]) if (context.args and context.args[0].isdigit()) else 30
+    await update.message.reply_text(f"⏳ Собираю отчёт по рекламе за {days} дн…")
+
+    from ad_analytics.service import generate_report
+    from ad_analytics.report import format_text
+    from ad_analytics.config import ConfigError
+    from ad_analytics.meta import MetaError
+    from ad_analytics.bitrix import BitrixError
+    try:
+        # Сетевые вызовы синхронные — уводим в поток, чтобы не блокировать бота.
+        data, since, until = await asyncio.to_thread(generate_report, None, None, days)
+        text = format_text(data, since, until)
+    except ConfigError as ex:
+        await update.message.reply_text(f"⚙️ Аналитика не настроена: {ex}")
+        return
+    except MetaError as ex:
+        await update.message.reply_text(f"Ошибка Meta: {ex}")
+        return
+    except BitrixError as ex:
+        await update.message.reply_text(f"Ошибка Bitrix24: {ex}")
+        return
+    except Exception as ex:  # чтобы бот не падал на непредвиденном
+        logger.exception("Ошибка /ads")
+        await update.message.reply_text(f"Непредвиденная ошибка: {ex}")
+        return
+
+    for chunk in _split_report(text):
+        await update.message.reply_text(f"<pre>{e(chunk)}</pre>", parse_mode=ParseMode.HTML)
+
+
 async def post_init(app: Application) -> None:
     commands = [
         BotCommand("start", "🏠 Главное меню"),
@@ -1083,9 +1138,13 @@ async def post_init(app: Application) -> None:
         BotCommand("myid", "🆔 Мой Telegram ID"),
     ]
     await app.bot.set_my_commands(commands)
+    admin_commands = commands + [
+        BotCommand("staff", "👥 Сотрудники"),
+        BotCommand("ads", "📊 Реклама vs заявки"),
+    ]
     for admin_id in config.ADMIN_IDS:
         try:
-            await app.bot.set_my_commands(commands + [BotCommand("staff", "👥 Сотрудники")],
+            await app.bot.set_my_commands(admin_commands,
                                           scope=BotCommandScopeChat(admin_id))
         except TelegramError as ex:  # админ ещё не писал боту
             logger.info("Команды для администратора %s не установлены: %s", admin_id, ex)
@@ -1106,6 +1165,7 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("myid", cmd_myid, filters=private))
     app.add_handler(CommandHandler("staff", cmd_staff, filters=private))
     app.add_handler(CommandHandler("sync", cmd_sync, filters=private))
+    app.add_handler(CommandHandler("ads", cmd_ads, filters=private))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(
         private & (filters.PHOTO | filters.Document.IMAGE | filters.Document.PDF), on_file))
