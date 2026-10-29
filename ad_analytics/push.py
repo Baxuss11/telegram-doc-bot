@@ -17,6 +17,24 @@ from .report import format_text
 from .service import generate_report
 
 
+def _load_env_file(path=None):
+    """Читает KEY=value из файла настроек (для запуска из cron, где окружения нет).
+
+    Уже заданные переменные не перезаписываются. Путь — ENV_FILE или /etc/osk-bot.env.
+    """
+    path = path or os.environ.get("ENV_FILE", "/etc/osk-bot.env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+    except FileNotFoundError:
+        pass
+
+
 def _split(text, limit=3500):
     chunks, cur = [], ""
     for line in text.split("\n"):
@@ -30,6 +48,7 @@ def _split(text, limit=3500):
 
 
 def main() -> int:
+    _load_env_file()
     token = (os.environ.get("BRIEFING_BOT_TOKEN") or "").strip()
     chat_id = (os.environ.get("BRIEFING_CHAT_ID") or "").strip()
     if not token or not chat_id:
