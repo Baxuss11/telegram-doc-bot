@@ -13,7 +13,7 @@ import sys
 
 import requests
 
-from .report import format_text
+from .report import format_brief
 from .service import generate_report
 
 
@@ -58,7 +58,7 @@ def main() -> int:
     days = int(os.environ.get("ADS_REPORT_DAYS", "7"))
 
     report, since, until = generate_report(days=days)
-    text = "📊 Отчёт по рекламе (расход vs заявки)\n\n" + format_text(report, since, until)
+    text = format_brief(report, since, until)
 
     api = f"https://api.telegram.org/bot{token}/sendMessage"
     for chunk in _split(text):

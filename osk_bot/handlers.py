@@ -1105,14 +1105,14 @@ async def cmd_ads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"⏳ Собираю отчёт по рекламе за {days} дн…")
 
     from ad_analytics.service import generate_report
-    from ad_analytics.report import format_text
+    from ad_analytics.report import format_brief
     from ad_analytics.config import ConfigError
     from ad_analytics.meta import MetaError
     from ad_analytics.bitrix import BitrixError
     try:
         # Сетевые вызовы синхронные — уводим в поток, чтобы не блокировать бота.
         data, since, until = await asyncio.to_thread(generate_report, None, None, days)
-        text = format_text(data, since, until)
+        text = format_brief(data, since, until)
     except ConfigError as ex:
         await update.message.reply_text(f"⚙️ Аналитика не настроена: {ex}")
         return

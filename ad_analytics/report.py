@@ -176,3 +176,63 @@ def format_text(report: dict, since: str, until: str) -> str:
         )
 
     return "\n".join(lines)
+
+
+def _money(value) -> str:
+    """Короткий формат суммы: разряды пробелом, без копеек (для брифа)."""
+    try:
+        return f"{round(float(value)):,}".replace(",", " ")
+    except (TypeError, ValueError):
+        return "0"
+
+
+def format_brief(report: dict, since: str, until: str) -> str:
+    """Короткая сводка на понятном языке — для утреннего брифа.
+
+    Показывает главное: сколько потрачено, что приносит клиентов, куда уходят
+    деньги, и честный статус привязки заявок к рекламе.
+    """
+    t = report["totals"]
+    rows = report["rows"]
+    total = t["leads"]
+    unmatched = report["unmatched_leads"]
+    matched = total - unmatched
+
+    real = [r for r in rows if r["key"] != NO_TAG and r["spend"] > 0]
+
+    L = [f"📊 Реклама · {since} — {until}", ""]
+    L.append(f"💰 Расход: {_money(t['spend'])}")
+    L.append(f"📥 Заявок в CRM: {total} · качественных: {t['qualified']}")
+
+    # Кто приносит клиентов (есть квал-заявки) — дешевле сверху.
+    winners = sorted(
+        [r for r in real if r["qualified"] > 0 and r["cost_per_qualified"]],
+        key=lambda r: r["cost_per_qualified"],
+    )
+    if winners:
+        L.append("")
+        L.append("✅ Приносят клиентов (дешевле — выше):")
+        for r in winners[:3]:
+            L.append(f"• {r['ad_name'][:38]} — {r['qualified']} кл. по {_money(r['cost_per_qualified'])}")
+
+    # Куда уходит больше всего денег.
+    spenders = sorted(real, key=lambda r: r["spend"], reverse=True)
+    if spenders:
+        L.append("")
+        L.append("🏆 Больше всего расхода:")
+        for r in spenders[:3]:
+            note = f" → {r['leads']} заявок" if r["leads"] else " → заявок не видно"
+            L.append(f"• {r['ad_name'][:38]} — {_money(r['spend'])}{note}")
+
+    # Честный статус привязки.
+    if total:
+        pct = round(100 * matched / total)
+        L.append("")
+        if pct < 40:
+            L.append(f"⚠️ К рекламе привязано лишь {matched} из {total} заявок ({pct}%) —")
+            L.append("пока не видно, какой креатив реально приносит клиентов.")
+            L.append("Чтобы увидеть: нужны UTM-метки в объявлениях (разовая настройка таргетологов).")
+        else:
+            L.append(f"🔗 Привязано к рекламе: {matched} из {total} заявок ({pct}%).")
+
+    return "\n".join(L)
