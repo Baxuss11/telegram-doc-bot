@@ -29,18 +29,72 @@
   var discount = Math.round((1 - t.price / FULL_PRICE) * 100);
   var hasDiscount = discount > 0;
 
-  // Короткие тексты, чтобы не переносились и не налезали на соседние строки
-  var untilText = 'До ' + t.label + ', 23:59' +
-    (next ? '. Потом — ' + fmt(next.price) + ' сом' : '');
+  // Блок «Билет участника» (Zero Block rec4634694403): элементы там стоят по жёстким
+  // координатам и на разных экранах наезжают друг на друга. Прячем его и рисуем ту же
+  // информацию обычной вёрсткой: цена, скидка, срок, кнопка сразу под ценой, шаги покупки.
+  var TICKET_REC = 'rec4634694403';
+  var TICKET_CSS =
+    '.osk-tk{background:#07101f;color:#fff;font-family:Gilroy,Inter,Arial,sans-serif;padding:48px 20px 56px;-webkit-font-smoothing:antialiased}' +
+    '.osk-tk *{box-sizing:border-box}' +
+    '.osk-tk__in{max-width:1160px;margin:0 auto;display:grid;grid-template-columns:1fr;gap:20px}' +
+    '.osk-tk__eyebrow{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b8dff;margin:0 0 14px}' +
+    '.osk-tk__card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:24px}' +
+    '.osk-tk__row{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px}' +
+    '.osk-tk__price{font-size:44px;font-weight:700;line-height:1;letter-spacing:-.01em;white-space:nowrap}' +
+    '.osk-tk__badge{font-size:15px;font-weight:700;line-height:1;padding:7px 10px;border-radius:999px;background:#ff3b30;color:#fff;white-space:nowrap}' +
+    '.osk-tk__old{font-size:16px;font-weight:600;color:rgba(255,255,255,.55);text-decoration:line-through;white-space:nowrap}' +
+    '.osk-tk__row+.osk-tk__price{margin-top:12px}' +
+    '.osk-tk__until{margin-top:16px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.08);font-size:15px;font-weight:600;line-height:1.35}' +
+    '.osk-tk__btn{margin-top:18px;display:flex;align-items:center;justify-content:center;width:100%;min-height:56px;padding:0 16px;border-radius:14px;' +
+      'background:#0068ff;color:#fff!important;font-size:17px;font-weight:700;line-height:1.2;text-align:center;text-decoration:none!important;' +
+      'box-shadow:0 10px 24px rgba(0,104,255,.35);transition:transform .1s,background .2s}' +
+    '.osk-tk__btn:hover{background:#0a5ce0}.osk-tk__btn:active{transform:scale(.98)}' +
+    '.osk-tk__hint{margin-top:10px;font-size:13px;font-weight:500;color:rgba(255,255,255,.6);text-align:center}' +
+    '.osk-tk__steps{background:#fff;color:#111318;border-radius:20px;padding:24px}' +
+    '.osk-tk__steps h3{margin:0 0 16px;font-family:inherit;font-size:22px;font-weight:700;line-height:1.2;color:#111318}' +
+    '.osk-tk__steps ol{list-style:none;margin:0;padding:0;display:grid;gap:14px}' +
+    '.osk-tk__steps li{display:grid;grid-template-columns:28px 1fr;gap:12px;align-items:start;font-size:15px;font-weight:600;line-height:1.4;color:#303642}' +
+    '.osk-tk__n{width:28px;height:28px;border-radius:50%;background:#eaf1ff;color:#0068ff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center}' +
+    '@media (min-width:960px){.osk-tk{padding:96px 40px}.osk-tk__in{grid-template-columns:1fr 1fr;gap:32px;align-items:start}' +
+      '.osk-tk__card,.osk-tk__steps{padding:32px}.osk-tk__price{font-size:56px}.osk-tk__steps{margin-top:30px}}';
 
-  // Кнопка покупки прямо под ценой — на месте строки «Цена растёт…»,
-  // чтобы её было видно сразу после перехода к блоку, без прокрутки.
-  function buyButtonHTML() {
-    return '<a href="' + waHref + '" data-osk-buy="1" style="display:flex;align-items:center;' +
-      'justify-content:center;box-sizing:border-box;width:100%;height:52px;padding:0 16px;' +
-      'border-radius:14px;background:#0068ff;color:#fff;font-size:17px;font-weight:700;' +
-      'line-height:1;text-decoration:none;white-space:nowrap">' +
-      'Купить билет за ' + price + '</a>';
+  function ticketSectionHTML() {
+    var steps = [
+      'Нажмите «Купить билет» и отправьте готовое сообщение в WhatsApp.',
+      'В ответ пришлём QR для оплаты и короткую инструкцию.',
+      'Оплатите ' + price + ' и отправьте чек по ссылке из сообщения.',
+      'После проверки билет с QR-кодом придёт в WhatsApp. Покажите его на входе.'
+    ];
+    return '<div class="osk-tk__in">' +
+      '<div><div class="osk-tk__eyebrow">Билет участника</div>' +
+        '<div class="osk-tk__card">' +
+          (hasDiscount ? '<div class="osk-tk__row"><span class="osk-tk__badge">−' + discount + '%</span>' +
+            '<span class="osk-tk__old">' + fmt(FULL_PRICE) + ' сом</span></div>' : '') +
+          '<div class="osk-tk__price">' + price + '</div>' +
+          '<div class="osk-tk__until">' + (next ? 'Цена действует до ' + t.label + ', 23:59. Потом — ' + fmt(next.price) + ' сом'
+            : 'Цена действует до ' + t.label) + '</div>' +
+          '<a class="osk-tk__btn" data-osk-buy="1" href="' + waHref + '">Купить билет за ' + price + '</a>' +
+          '<div class="osk-tk__hint">Откроется WhatsApp с готовым сообщением</div>' +
+        '</div></div>' +
+      '<div class="osk-tk__steps"><h3>Как купить билет</h3><ol>' +
+        steps.map(function (s, n) { return '<li><span class="osk-tk__n">' + (n + 1) + '</span><span>' + s + '</span></li>'; }).join('') +
+      '</ol></div>' +
+    '</div>';
+  }
+
+  function renderTicketSection() {
+    var rec = document.getElementById(TICKET_REC);
+    if (!rec || rec.querySelector('.osk-tk')) return;
+    if (!document.getElementById('osk-tk-css')) {
+      var st = document.createElement('style');
+      st.id = 'osk-tk-css';
+      st.textContent = TICKET_CSS + '#' + TICKET_REC + ' .t396{display:none!important}';
+      document.head.appendChild(st);
+    }
+    var section = document.createElement('div');
+    section.className = 'osk-tk';
+    section.innerHTML = ticketSectionHTML();
+    rec.appendChild(section);
   }
 
   // Текст, который ПОКУПАТЕЛЬ отправляет нам. Инструкцию с QR отвечает менеджер с номера PHONE.
@@ -103,21 +157,8 @@
       if (/^\s*сейчас\s*$/.test(tx) && !hasDiscount) spans[s].textContent = '';
     }
 
-    // Блок «Билет участника»
-    setHTML('[field="tn_text_1791545610000000002"]', hasDiscount
-      ? 'Скидка<br><span style="font-size:64px;font-weight:900;line-height:.9">' + discount + '%</span><br>сейчас'
-      : 'Цена<br><span style="font-size:64px;font-weight:900;line-height:.9">' + fmt(t.price / 1000) + 'K</span><br>сом');
-    setHTML('[field="tn_text_1791545610000000004"]', (hasDiscount ? 'По скидке сейчас: ' : 'Сейчас: ') + price);
-    setHTML('[field="tn_text_1791545610000000005"]', untilText);
-    var slot = document.querySelectorAll('[field="tn_text_1791545610000000006"]');
-    for (var b = 0; b < slot.length; b++) {
-      if (!slot[b].querySelector('[data-osk-buy]')) slot[b].innerHTML = buyButtonHTML();
-    }
-    setHTML('[field="tn_text_1791568200000000001"]',
-      '1. Нажмите кнопку ниже — откроется WhatsApp OSK с готовым сообщением, отправьте его.<br>' +
-      '2. В ответ пришлём QR для оплаты и инструкцию.<br>' +
-      '3. Оплатите ' + price + ' и отправьте чек по ссылке из сообщения.<br>' +
-      '4. После проверки билет с QR-кодом придёт в WhatsApp.');
+    // Блок «Билет участника» — своя вёрстка вместо Zero Block
+    renderTicketSection();
 
     // FAQ «Есть ли VIP-билеты?»
     setHTML('[field="tn_text_1791545612000000011"]',
