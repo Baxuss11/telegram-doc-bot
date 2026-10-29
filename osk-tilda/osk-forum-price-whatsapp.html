@@ -32,9 +32,16 @@
   // Короткие тексты, чтобы не переносились и не налезали на соседние строки
   var untilText = 'До ' + t.label + ', 23:59' +
     (next ? '. Потом — ' + fmt(next.price) + ' сом' : '');
-  var ladder = 'Цена растёт: ' + TIERS.map(function (x) {
-    return 'до ' + x.short + ' — ' + fmt(x.price);
-  }).join(', ') + ' сом.';
+
+  // Кнопка покупки прямо под ценой — на месте строки «Цена растёт…»,
+  // чтобы её было видно сразу после перехода к блоку, без прокрутки.
+  function buyButtonHTML() {
+    return '<a href="' + waHref + '" data-osk-buy="1" style="display:flex;align-items:center;' +
+      'justify-content:center;box-sizing:border-box;width:100%;height:52px;padding:0 16px;' +
+      'border-radius:14px;background:#0068ff;color:#fff;font-size:17px;font-weight:700;' +
+      'line-height:1;text-decoration:none;white-space:nowrap">' +
+      'Купить билет за ' + price + '</a>';
+  }
 
   // Текст, который ПОКУПАТЕЛЬ отправляет нам. Инструкцию с QR отвечает менеджер с номера PHONE.
   var message =
@@ -102,7 +109,10 @@
       : 'Цена<br><span style="font-size:64px;font-weight:900;line-height:.9">' + fmt(t.price / 1000) + 'K</span><br>сом');
     setHTML('[field="tn_text_1791545610000000004"]', (hasDiscount ? 'По скидке сейчас: ' : 'Сейчас: ') + price);
     setHTML('[field="tn_text_1791545610000000005"]', untilText);
-    setHTML('[field="tn_text_1791545610000000006"]', ladder);
+    var slot = document.querySelectorAll('[field="tn_text_1791545610000000006"]');
+    for (var b = 0; b < slot.length; b++) {
+      if (!slot[b].querySelector('[data-osk-buy]')) slot[b].innerHTML = buyButtonHTML();
+    }
     setHTML('[field="tn_text_1791568200000000001"]',
       '1. Нажмите кнопку ниже — откроется WhatsApp OSK с готовым сообщением, отправьте его.<br>' +
       '2. В ответ пришлём QR для оплаты и инструкцию.<br>' +
