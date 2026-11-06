@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS inspections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     inspector_id INTEGER NOT NULL,
     inspector_name TEXT,
-    kind TEXT NOT NULL DEFAULT 'tech',  -- tech / legal
+    kind TEXT NOT NULL DEFAULT 'tech',  -- tech / legal / realtor
     company TEXT NOT NULL,
     zhk TEXT NOT NULL,
     folder_label TEXT NOT NULL,

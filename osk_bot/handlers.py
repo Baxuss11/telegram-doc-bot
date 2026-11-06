@@ -141,6 +141,7 @@ def menu_screen(user) -> tuple[str, InlineKeyboardMarkup]:
                          callback_data="cont")])
     rows.append([Btn("⚖️ Юридическая проверка", callback_data="new:legal")])
     rows.append([Btn("🔧 Техническая проверка", callback_data="new:tech")])
+    rows.append([Btn("🏘 Оценка риэлтора", callback_data="new:realtor")])
     rows.append([Btn("📋 Мои проверки", callback_data="mine")])
     if is_admin(uid):
         rows.append([Btn("🗂 Проверки всех менеджеров", callback_data="all")])
@@ -152,7 +153,8 @@ def menu_screen(user) -> tuple[str, InlineKeyboardMarkup]:
             "Выберите раздел проверки. Бот проведёт по пунктам: фотографируете документ, "
             "отмечаете, что есть, — баллы и отчёт посчитает сам.\n\n"
             "⚖️ Юридическая — документы, земля, договор (итог в %).\n"
-            "🔧 Техническая — журналы, лаборатория, графики (итог в баллах).")
+            "🔧 Техническая — журналы, лаборатория, графики (итог в баллах).\n"
+            "🏘 Оценка риэлтора — комфорт ЖК: парковка, двор, лифт и др. (итог из 100).")
     return text, InlineKeyboardMarkup(rows)
 
 
@@ -413,7 +415,7 @@ def finish_screen(insp) -> tuple[str, InlineKeyboardMarkup]:
 # ============================ Google Диск ============================
 
 def _kind_label(insp) -> str:
-    return "Юридическая" if insp["kind"] == "legal" else "Техническая"
+    return module_for(insp["kind"]).label
 
 
 def _base_path(insp) -> list[str]:
@@ -567,9 +569,8 @@ async def sync_to_google(bot: Bot, insp, pdf: bytes, contents: dict[int, bytes])
         res = await gdrive.upload(_base_path(insp), pdf_name, "application/pdf", pdf)
         db.set_inspection(iid, report_url=res["fileUrl"])
         sh, srows, dh, drows = sheet_rows(db.get_inspection(iid))
-        # Техническая часть пишется в «Рейтинг»/«Детали», юридическая — в «… — Юр».
-        rating_sheet, detail_sheet = ("Рейтинг — Юр", "Детали — Юр") if insp["kind"] == "legal" \
-            else ("Рейтинг", "Детали")
+        # У каждого раздела свои листы: «Рейтинг»/«Детали», «… — Юр», «… — Риэлтор».
+        rating_sheet, detail_sheet = module_for(insp["kind"]).sheets
         res = await gdrive.append_rows(rating_sheet, sh, srows)
         await gdrive.append_rows(detail_sheet, dh, drows)
     except gdrive.DriveError as ex:
@@ -706,14 +707,16 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "📘 <b>Как проводить проверку</b>\n\n"
-        "1. /start → выберите раздел: ⚖️ Юридическая или 🔧 Техническая. Укажите компанию и ЖК.\n"
-        "2. На каждом пункте сфотографируйте документ (можно несколько фото или PDF).\n"
-        "3. В юридической части — выберите один вариант; в технической — отметьте галочками, что есть. "
+        "1. /start → выберите раздел: ⚖️ Юридическая, 🔧 Техническая или 🏘 Оценка риэлтора. "
+        "Укажите компанию и ЖК.\n"
+        "2. На каждом пункте сфотографируйте документ или объект (можно несколько фото или PDF).\n"
+        "3. В юридической части и оценке риэлтора — выберите один вариант; в технической — "
+        "отметьте галочками, что есть. "
         "Если документа нет — «🚫 Отсутствует».\n"
         "4. Замечание по пункту — просто напишите его сообщением.\n"
         "5. «📑 Пункты» — список всех пунктов, можно вернуться к любому.\n"
         "6. «🏁 Завершить проверку» — бот пришлёт PDF-отчёт и сохранит всё на Google Диск.\n\n"
-        "Юридическая и техническая — отдельные проверки по объекту. "
+        "Юридическая, техническая и оценка риэлтора — отдельные проверки по объекту. "
         "Если прервались — /start → «▶️ Продолжить». Ничего не потеряется.",
         parse_mode=ParseMode.HTML)
 
