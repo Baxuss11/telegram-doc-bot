@@ -153,7 +153,7 @@ def menu_screen(user) -> tuple[str, InlineKeyboardMarkup]:
             "Выберите раздел проверки. Бот проведёт по пунктам: фотографируете документ, "
             "отмечаете, что есть, — баллы и отчёт посчитает сам.\n\n"
             "⚖️ Юридическая — документы, земля, договор (итог в %).\n"
-            "🔧 Техническая — журналы, лаборатория, графики (итог в баллах).\n"
+            "🔧 Техническая — журналы, лаборатория, графики (итог из 100).\n"
             "🏘 Оценка риэлтора — комфорт ЖК: парковка, двор, лифт и др. (итог из 100).")
     return text, InlineKeyboardMarkup(rows)
 
@@ -161,7 +161,7 @@ def menu_screen(user) -> tuple[str, InlineKeyboardMarkup]:
 def _insp_label(insp, with_name: bool = False) -> str:
     mod = module_for(insp["kind"])
     score = module_total(mod, db.checked_criteria(insp["id"]))
-    val = f"{mod.percent(score)}%" if mod.scoring == "percent" else f"{score}/{mod.max_points}"
+    val = mod.short(score)
     date = (insp["finished_at"] or insp["started_at"] or "")[:10]
     who = f"{insp['inspector_name']}: " if with_name else ""
     return f"{who}{mod.emoji} {insp['company']}/{insp['zhk']} · {val} · {date}"
@@ -365,9 +365,7 @@ def schedule_card_refresh(app: Application, uid: int) -> None:
 
 
 def _score_line(mod, score: int) -> str:
-    if mod.scoring == "percent":
-        return f"{mod.percent(score)}% ({score} из {mod.max_points}) — {mod.grade(score)}"
-    return f"{score} из {mod.max_points} баллов — {mod.grade(score)}"
+    return mod.summary(score)
 
 
 def list_screen(insp) -> tuple[str, InlineKeyboardMarkup]:

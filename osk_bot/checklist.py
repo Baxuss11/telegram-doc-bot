@@ -1,7 +1,8 @@
 """Чек-листы проверки и правила начисления баллов.
 
 Бот ведёт три независимых раздела:
-- «tech»    — техническая часть: по пунктам галочки (складываются), итог из 38 баллов;
+- «tech»    — техническая часть: по пунктам галочки (складываются), 38 баллов
+              пересчитываются в шкалу из 100 (28 из 38 → 74 из 100);
 - «legal»   — юридическая часть: на пункте выбирается ОДИН вариант, итог в процентах;
 - «realtor» — оценка риэлтора: комфорт ЖК по 10 критериям, один вариант, итог из 100.
 
@@ -57,7 +58,7 @@ class Module:
     key: str          # tech / legal
     title: str
     emoji: str
-    scoring: str      # points (из N баллов) | percent (из 100%)
+    scoring: str      # points (из N баллов) | percent (из 100%) | hundred (N баллов → из 100)
     items: tuple[Item, ...]
     grades: tuple[tuple[int, str], ...]
     label: str = ""                                 # имя папки на Диске: «<label> ДАТА»
@@ -72,7 +73,7 @@ class Module:
         return sum(it.max_points for it in self.items)
 
     def grade(self, score: int) -> str:
-        value = self.percent(score) if self.scoring == "percent" else score
+        value = score if self.scoring == "points" else self.percent(score)
         for threshold, name in self.grades:
             if value >= threshold:
                 return name
@@ -80,6 +81,23 @@ class Module:
 
     def percent(self, score: int) -> int:
         return round(100 * score / self.max_points) if self.max_points else 0
+
+    def short(self, score: int) -> str:
+        """Итог коротко — для списков проверок."""
+        if self.scoring == "percent":
+            return f"{self.percent(score)}%"
+        if self.scoring == "hundred":
+            return f"{self.percent(score)}/100"
+        return f"{score}/{self.max_points}"
+
+    def summary(self, score: int) -> str:
+        """Итог полностью — для карточек, сообщений и PDF."""
+        if self.scoring == "percent":
+            return f"{self.percent(score)}% ({score} из {self.max_points}) — {self.grade(score)}"
+        if self.scoring == "hundred":
+            return (f"{self.percent(score)} из 100 баллов ({score} из {self.max_points}) "
+                    f"— {self.grade(score)}")
+        return f"{score} из {self.max_points} баллов — {self.grade(score)}"
 
 
 # =========================== Техническая часть ===========================
@@ -316,9 +334,10 @@ REALTOR_ITEMS: tuple[Item, ...] = (
 
 # =============================== Модули ===============================
 
+# Пороги в шкале из 100 — те же, что были в баллах: 30 из 38 → 79, 20 из 38 → 53.
 TECH_MODULE = Module(
-    "tech", "Техническая часть", "🔧", "points", TECH_ITEMS,
-    grades=((30, "Хорошо"), (20, "Удовлетворительно"), (0, "Неудовлетворительно")),
+    "tech", "Техническая часть", "🔧", "hundred", TECH_ITEMS,
+    grades=((79, "Хорошо"), (53, "Удовлетворительно"), (0, "Неудовлетворительно")),
     label="Техническая", sheets=("Рейтинг", "Детали"),
 )
 LEGAL_MODULE = Module(

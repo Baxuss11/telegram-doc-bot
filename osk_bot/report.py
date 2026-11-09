@@ -92,10 +92,7 @@ def build(data: ReportData) -> bytes:
 
     pdf.ln(4)
     pdf.set_font("DejaVu", "B", 14)
-    if mod.scoring == "percent":
-        summary = f"Итог: {mod.percent(data.score)}% ({data.score} из {mod.max_points}) — {data.grade}"
-    else:
-        summary = f"Итог: {data.score} из {mod.max_points} баллов — {data.grade}"
+    summary = f"Итог: {mod.summary(data.score)}"
     pdf.multi_cell(width, 8, summary, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
 
